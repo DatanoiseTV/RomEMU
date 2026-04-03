@@ -403,6 +403,28 @@ input[type="file"]::file-selector-button:hover {
     margin-bottom: 8px;
 }
 
+/* Pinout */
+.pinout-grid {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.pinout-group {
+    flex: 1;
+    min-width: 160px;
+}
+.pinout-group h3 {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+.pin-num {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-weight: 600;
+}
+
 /* GPIO control */
 .gpio-buttons {
     display: flex;

@@ -44,6 +44,7 @@ extern esp_err_t handler_api_log(httpd_req_t *req);
 extern esp_err_t handler_api_events(httpd_req_t *req);
 extern esp_err_t handler_api_gpio_get(httpd_req_t *req);
 extern esp_err_t handler_api_gpio_action(httpd_req_t *req);
+extern esp_err_t handler_api_pinout(httpd_req_t *req);
 
 /* Slot handler that extracts the slot number from the URI */
 extern esp_err_t handler_api_slot_action(httpd_req_t *req);
@@ -65,6 +66,7 @@ static const httpd_uri_t uri_handlers[] = {
     { .uri = "/api/wifi",       .method = HTTP_POST,   .handler = handler_api_wifi_set },
     { .uri = "/api/log",        .method = HTTP_GET,    .handler = handler_api_log },
     { .uri = "/api/events",     .method = HTTP_GET,    .handler = handler_api_events },
+    { .uri = "/api/pinout",     .method = HTTP_GET,    .handler = handler_api_pinout },
     { .uri = "/api/gpio",       .method = HTTP_GET,    .handler = handler_api_gpio_get },
     { .uri = "/api/gpio/*",     .method = HTTP_POST,   .handler = handler_api_gpio_action },
     /* Slot-specific endpoints use wildcard matching */
@@ -80,9 +82,11 @@ esp_err_t web_server_start(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = URI_HANDLER_COUNT + 4;
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.stack_size = 8192;
+    config.stack_size = 16384;
     config.max_open_sockets = 7;
     config.lru_purge_enable = true;
+    config.recv_wait_timeout = 30;
+    config.send_wait_timeout = 30;
 
     esp_err_t err = httpd_start(&s_server, &config);
     if (err != ESP_OK) {

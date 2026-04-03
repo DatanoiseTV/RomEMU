@@ -192,3 +192,10 @@ int sse_manager_client_count(void)
 {
     return s_client_count;
 }
+
+void sse_manager_notify_slot_change(void)
+{
+    if (s_client_count == 0) return;
+    const char *msg = "event: slot\ndata: {\"changed\":true}\n\n";
+    send_to_all(msg, strlen(msg));
+}

@@ -70,6 +70,17 @@
             </div>
         </section>
 
+        <!-- Pinout -->
+        <section class="card" id="pinout-section">
+            <div class="card-header">
+                <h2>Pinout</h2>
+                <button class="btn btn-small" onclick="togglePinout()">Show / Hide</button>
+            </div>
+            <div id="pinout-data" hx-get="/api/pinout" hx-trigger="load" hx-swap="innerHTML" style="display:none">
+                <p class="muted">Loading...</p>
+            </div>
+        </section>
+
         <!-- GPIO Control -->
         <section class="card" id="gpio-control">
             <h2>Target Control</h2>

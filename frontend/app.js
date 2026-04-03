@@ -17,6 +17,11 @@ function toggleChipDb() {
     if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
+function togglePinout() {
+    const el = document.getElementById('pinout-data');
+    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
 /* ---- SSE Connection ---- */
 
 function connectSSE() {
@@ -34,6 +39,12 @@ function connectSSE() {
 
     evtSource.addEventListener('status', function(e) {
         try { updateStatusBar(JSON.parse(e.data)); } catch (err) {}
+    });
+
+    evtSource.addEventListener('slot', function(e) {
+        /* Slot state changed (upload/insert/eject/delete) — refresh UI */
+        htmx.trigger('#image-status', 'load');
+        htmx.trigger('#sys-status', 'load');
     });
 
     evtSource.onerror = function() { setTimeout(connectSSE, 3000); };
@@ -208,8 +219,7 @@ function handleUpload(e) {
                 resultDiv.innerHTML = '<span style="color:var(--green)">Upload OK! Inserting...</span>';
                 fetch('/api/slots/0/insert', { method: 'POST' }).then(function() {
                     resultDiv.innerHTML = '<span style="color:var(--green)">Uploaded &amp; inserted! (' + ratio + ':1 compression)</span>';
-                    htmx.trigger('#image-status', 'load');
-                    htmx.trigger('#sys-status', 'load');
+                    /* SSE slot event will auto-refresh the UI */
                 });
             } else {
                 resultDiv.innerHTML = '<span style="color:var(--red)">Upload failed: ' + xhr.statusText + '</span>';
@@ -279,6 +289,14 @@ document.addEventListener('htmx:afterSwap', function(e) {
         try { updateGpioStatus(JSON.parse(e.detail.target.textContent)); } catch (err) {}
     }
 
+    /* Pinout */
+    if (e.detail.target.id === 'pinout-data') {
+        try {
+            const p = JSON.parse(e.detail.target.textContent);
+            e.detail.target.innerHTML = renderPinout(p);
+        } catch (err) {}
+    }
+
     if (e.detail.target.id === 'wifi-info') {
         try {
             const d = JSON.parse(e.detail.target.textContent);
@@ -335,6 +353,34 @@ function slotAction(action) {
         htmx.trigger('#image-status', 'load');
         htmx.trigger('#sys-status', 'load');
     });
+}
+
+function renderPinout(p) {
+    let h = '<p class="muted" style="margin-bottom:8px">Board: <strong>' + p.target + '</strong> &mdash; ' + p.notes + '</p>';
+    h += '<div class="pinout-grid">';
+
+    h += '<div class="pinout-group"><h3>SPI Flash</h3><table class="log-table" style="font-size:0.82rem">';
+    h += '<tr><td>CS#</td><td class="pin-num">GPIO ' + p.spi.cs + '</td></tr>';
+    h += '<tr><td>CLK</td><td class="pin-num">GPIO ' + p.spi.clk + '</td></tr>';
+    h += '<tr><td>MOSI / IO0</td><td class="pin-num">GPIO ' + p.spi.mosi + '</td></tr>';
+    h += '<tr><td>MISO / IO1</td><td class="pin-num">GPIO ' + p.spi.miso + '</td></tr>';
+    h += '<tr><td>WP / IO2</td><td class="pin-num">GPIO ' + p.spi.wp + '</td></tr>';
+    h += '<tr><td>HD / IO3</td><td class="pin-num">GPIO ' + p.spi.hd + '</td></tr>';
+    h += '</table></div>';
+
+    h += '<div class="pinout-group"><h3>I2C EEPROM</h3><table class="log-table" style="font-size:0.82rem">';
+    h += '<tr><td>SDA</td><td class="pin-num">GPIO ' + p.i2c.sda + '</td></tr>';
+    h += '<tr><td>SCL</td><td class="pin-num">GPIO ' + p.i2c.scl + '</td></tr>';
+    h += '</table></div>';
+
+    h += '<div class="pinout-group"><h3>Target Control</h3><table class="log-table" style="font-size:0.82rem">';
+    h += '<tr><td>RESET# (open-drain)</td><td class="pin-num">GPIO ' + p.control.reset + '</td></tr>';
+    h += '<tr><td>POWER (MOSFET gate)</td><td class="pin-num">GPIO ' + p.control.power + '</td></tr>';
+    h += '</table></div>';
+
+    h += '</div>';
+    h += '<p class="muted" style="margin-top:8px;font-size:0.75rem">Connect GND between boards. Do not bridge power rails unless intended.</p>';
+    return h;
 }
 
 function renderChipDb(data) {

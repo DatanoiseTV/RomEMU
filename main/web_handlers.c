@@ -10,6 +10,7 @@
 #include "romemu_common.h"
 #include "gpio_control.h"
 #include "compressed_store.h"
+#include "pin_config.h"
 #include "embedded_files.h"
 
 #include "esp_log.h"
@@ -324,7 +325,10 @@ esp_err_t handler_api_slot_upload(httpd_req_t *req)
     int final_size = received;
 
     if (strcmp(compressed_hdr, "deflate") == 0) {
-        /* Decompress raw DEFLATE data using miniz (in ESP32 ROM) */
+        /* Decompress raw DEFLATE data using heap-allocated miniz tinfl.
+         * NOTE: tinfl_decompress_mem_to_mem uses ~11KB stack for the
+         * decompressor state, which overflows the httpd 8KB stack.
+         * We use the streaming API with heap allocation instead. */
         uint32_t original_size = 0;
         char orig_hdr[16] = {};
         httpd_req_get_hdr_value_str(req, "X-Original-Size", orig_hdr, sizeof(orig_hdr));
@@ -351,32 +355,57 @@ esp_err_t handler_api_slot_upload(httpd_req_t *req)
             return ESP_FAIL;
         }
 
-        /* Use miniz tinfl for raw DEFLATE decompression */
-        size_t decomp_size = tinfl_decompress_mem_to_mem(
-            decompressed, original_size, buf, received,
-            TINFL_FLAG_PARSE_ZLIB_HEADER  /* 0 for raw deflate */
-        );
+        /* Heap-allocated streaming decompression (avoids 11KB stack usage) */
+        tinfl_decompressor *decomp = heap_caps_malloc(sizeof(tinfl_decompressor), MALLOC_CAP_INTERNAL);
+        if (!decomp) {
+            heap_caps_free(decompressed);
+            heap_caps_free(buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+            return ESP_FAIL;
+        }
+        tinfl_init(decomp);
 
-        /* If raw deflate failed, try without flags (pure raw) */
-        if (decomp_size == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED) {
-            decomp_size = tinfl_decompress_mem_to_mem(
-                decompressed, original_size, buf, received, 0);
+        size_t in_remaining = received;
+        size_t out_pos = 0;
+        const uint8_t *in_ptr = buf;
+        bool decomp_ok = true;
+
+        while (in_remaining > 0 || out_pos < original_size) {
+            size_t in_bytes = in_remaining;
+            size_t out_bytes = original_size - out_pos;
+            tinfl_status status = tinfl_decompress(decomp,
+                in_ptr, &in_bytes,
+                decompressed, decompressed + out_pos, &out_bytes,
+                (in_remaining > in_bytes) ? TINFL_FLAG_HAS_MORE_INPUT : 0);
+
+            in_ptr += in_bytes;
+            in_remaining -= in_bytes;
+            out_pos += out_bytes;
+
+            if (status == TINFL_STATUS_DONE) break;
+            if (status < 0) {
+                ESP_LOGE(TAG, "Decompression failed: status=%d at in=%d out=%" PRIu32,
+                         status, (int)(in_ptr - buf), (uint32_t)out_pos);
+                decomp_ok = false;
+                break;
+            }
         }
 
-        if (decomp_size == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED) {
-            ESP_LOGE(TAG, "Decompression failed");
+        heap_caps_free(decomp);
+
+        if (!decomp_ok) {
             heap_caps_free(decompressed);
             heap_caps_free(buf);
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Decompression failed");
             return ESP_FAIL;
         }
 
-        ESP_LOGI(TAG, "Decompressed: %u bytes (%.1f:1 ratio)",
-                 (unsigned)decomp_size, (float)decomp_size / received);
+        ESP_LOGI(TAG, "Decompressed: %" PRIu32 " bytes (%.1f:1 ratio)",
+                 (uint32_t)out_pos, (float)out_pos / received);
 
         heap_caps_free(buf);
         final_buf = decompressed;
-        final_size = (int)decomp_size;
+        final_size = (int)out_pos;
     }
 
     esp_err_t err = rom_store_upload(slot, final_buf, final_size, chip_type,
@@ -387,6 +416,8 @@ esp_err_t handler_api_slot_upload(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload failed");
         return ESP_FAIL;
     }
+
+    sse_manager_notify_slot_change();
 
     httpd_resp_set_type(req, "application/json");
     char resp[128];
@@ -471,6 +502,7 @@ esp_err_t handler_api_slot_insert(httpd_req_t *req)
         i2c_eeprom_emu_set_chip(s->chip_type);
     }
 
+    sse_manager_notify_slot_change();
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
@@ -494,6 +526,7 @@ esp_err_t handler_api_slot_eject(httpd_req_t *req)
 
     rom_store_eject(slot);
 
+    sse_manager_notify_slot_change();
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
@@ -516,6 +549,7 @@ esp_err_t handler_api_slot_delete(httpd_req_t *req)
 
     rom_store_delete(slot);
 
+    sse_manager_notify_slot_change();
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
@@ -819,4 +853,33 @@ esp_err_t handler_api_gpio_action(httpd_req_t *req)
     gpio_control_get_json(resp, sizeof(resp));
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, resp, strlen(resp));
+}
+
+/* ---- Pinout ---- */
+
+esp_err_t handler_api_pinout(httpd_req_t *req)
+{
+    char buf[512];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"target\":\"%s\","
+        "\"spi\":{\"cs\":%d,\"clk\":%d,\"mosi\":%d,\"miso\":%d,\"wp\":%d,\"hd\":%d},"
+        "\"i2c\":{\"sda\":%d,\"scl\":%d},"
+        "\"control\":{\"reset\":%d,\"power\":%d},"
+        "\"notes\":\"%s\"}",
+#if CONFIG_IDF_TARGET_ESP32P4
+        "ESP32-P4-Nano",
+#else
+        "ESP32-S3-DevKitC",
+#endif
+        PIN_SPI_CS, PIN_SPI_CLK, PIN_SPI_MOSI, PIN_SPI_MISO, PIN_SPI_WP, PIN_SPI_HD,
+        PIN_I2C_SDA, PIN_I2C_SCL,
+        PIN_RESET_OUT, PIN_POWER_OUT,
+#if CONFIG_IDF_TARGET_ESP32P4
+        "SPI on right header, I2C on board bus, control on left header. ETH built-in."
+#else
+        "SPI on IOMUX (FSPI), I2C on GPIO 1/2, control on GPIO 4/5."
+#endif
+    );
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
 }
