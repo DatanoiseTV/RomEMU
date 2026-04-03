@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 static const char *TAG = "cstore";
 
@@ -30,7 +31,7 @@ cstore_t *cstore_create(const uint8_t *raw_data, uint32_t image_size,
     if (chip_size == 0) chip_size = image_size;
     uint32_t num_blocks = (chip_size + CSTORE_BLOCK_SIZE - 1) / CSTORE_BLOCK_SIZE;
     if (num_blocks > CSTORE_MAX_BLOCKS) {
-        ESP_LOGE(TAG, "Too many blocks: %u (max %d)", num_blocks, CSTORE_MAX_BLOCKS);
+        ESP_LOGE(TAG, "Too many blocks: %" PRIu32 " (max %d)", num_blocks, CSTORE_MAX_BLOCKS);
         return NULL;
     }
 
@@ -48,7 +49,7 @@ cstore_t *cstore_create(const uint8_t *raw_data, uint32_t image_size,
     /* Allocate block index in PSRAM */
     cs->blocks = heap_caps_calloc(num_blocks, sizeof(cstore_block_info_t), MALLOC_CAP_SPIRAM);
     if (!cs->blocks) {
-        ESP_LOGE(TAG, "Failed to allocate block index (%u entries)", num_blocks);
+        ESP_LOGE(TAG, "Failed to allocate block index (%" PRIu32 " entries)", num_blocks);
         cstore_destroy(cs);
         return NULL;
     }
@@ -115,7 +116,7 @@ cstore_t *cstore_create(const uint8_t *raw_data, uint32_t image_size,
     if (total_comp > 0) {
         cs->comp_data = heap_caps_malloc(total_comp, MALLOC_CAP_SPIRAM);
         if (!cs->comp_data) {
-            ESP_LOGE(TAG, "Failed to allocate %u bytes for compressed data", total_comp);
+            ESP_LOGE(TAG, "Failed to allocate %" PRIu32 " bytes for compressed data", total_comp);
             heap_caps_free(temp_comp);
             cstore_destroy(cs);
             return NULL;
@@ -168,9 +169,9 @@ cstore_t *cstore_create(const uint8_t *raw_data, uint32_t image_size,
     cs->tick = 0;
 
     float ratio = (image_size > 0) ? (float)image_size / (write_pos > 0 ? write_pos : 1) : 0;
-    ESP_LOGI(TAG, "Compressed %u -> %u bytes (%.1f:1 ratio, %u erased blocks, %u raw blocks)",
+    ESP_LOGI(TAG, "Compressed %" PRIu32 " -> %" PRIu32 " bytes (%.1f:1 ratio, %" PRIu32 " erased blocks, %" PRIu32 " raw blocks)",
              image_size, write_pos, ratio, erased_blocks, incompressible);
-    ESP_LOGI(TAG, "  %u blocks, %u KB PSRAM used (index: %u KB, data: %u KB)",
+    ESP_LOGI(TAG, "  %" PRIu32 " blocks, %u KB PSRAM used (index: %u KB, data: %u KB)",
              num_blocks,
              (unsigned)(cstore_get_psram_usage(cs) / 1024),
              (unsigned)(num_blocks * sizeof(cstore_block_info_t) / 1024),
@@ -266,7 +267,7 @@ static cstore_cache_line_t *cache_load_block(cstore_t *cs, uint32_t block_idx)
             size_t dec = lz4_decompress(cs->comp_data + bi->offset, bi->comp_size,
                                         line->data, block_len);
             if (dec != block_len) {
-                ESP_LOGE(TAG, "Decompression failed for block %u (got %u, expected %u)",
+                ESP_LOGE(TAG, "Decompression failed for block %" PRIu32 " (got %u, expected %" PRIu32 ")",
                          block_idx, (unsigned)dec, block_len);
                 memset(line->data, 0xFF, CSTORE_BLOCK_SIZE);
             }
@@ -321,7 +322,7 @@ static void flush_cache_line(cstore_t *cs, cstore_cache_line_t *line)
         cs->comp_data_used += comp_size;
         cs->compressions++;
     } else {
-        ESP_LOGW(TAG, "Compressed buffer full, cannot flush block %u", block_idx);
+        ESP_LOGW(TAG, "Compressed buffer full, cannot flush block %" PRIu32, block_idx);
         /* Keep the block cached and dirty - reads still work from cache */
     }
 
@@ -449,10 +450,10 @@ int cstore_get_stats_json(const cstore_t *cs, char *buf, size_t buf_size)
     float ratio = (cs->stored_size > 0) ?
                   (float)cs->raw_size / cs->stored_size : 0;
     return snprintf(buf, buf_size,
-        "{\"enabled\":true,\"raw_size\":%u,\"compressed_size\":%u,"
-        "\"ratio\":%.1f,\"num_blocks\":%u,"
-        "\"psram_used\":%u,\"cache_hits\":%u,\"cache_misses\":%u,"
-        "\"decompressions\":%u,\"compressions\":%u}",
+        "{\"enabled\":true,\"raw_size\":%" PRIu32 ",\"compressed_size\":%" PRIu32 ","
+        "\"ratio\":%.1f,\"num_blocks\":%" PRIu32 ","
+        "\"psram_used\":%" PRIu32 ",\"cache_hits\":%" PRIu32 ",\"cache_misses\":%" PRIu32 ","
+        "\"decompressions\":%" PRIu32 ",\"compressions\":%" PRIu32 "}",
         cs->raw_size, cs->stored_size, ratio, cs->num_blocks,
         cstore_get_psram_usage(cs),
         cs->cache_hits, cs->cache_misses,

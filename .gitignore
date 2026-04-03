@@ -6,3 +6,6 @@ dependencies.lock
 .cache/
 .claude/
 .DS_Store
+.vscode/
+managed_components/
+dependencies.lock

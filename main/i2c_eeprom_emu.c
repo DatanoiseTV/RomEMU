@@ -6,10 +6,12 @@
 
 #include "driver/i2c_slave.h"
 #include "esp_log.h"
+#include "esp_idf_version.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 #include <string.h>
+#include <inttypes.h>
 
 static const char *TAG = "i2c_emu";
 
@@ -133,8 +135,14 @@ static void i2c_emu_task(void *arg)
             tx_chunk[i] = slot->data[(ctx->addr_pointer + i) % chip_size];
         }
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+        uint32_t write_len = 0;
+        esp_err_t err = i2c_slave_write(ctx->handle, tx_chunk, sizeof(tx_chunk),
+                                         &write_len, pdMS_TO_TICKS(100));
+#else
         esp_err_t err = i2c_slave_transmit(ctx->handle, tx_chunk, sizeof(tx_chunk),
                                             pdMS_TO_TICKS(100));
+#endif
         if (err == ESP_OK) {
             g_i2c_stats.total_reads++;
             g_i2c_stats.bytes_read += sizeof(tx_chunk);
@@ -194,7 +202,11 @@ esp_err_t i2c_eeprom_emu_start(chip_type_t chip)
 
     /* Register receive callback */
     i2c_slave_event_callbacks_t cbs = {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+        .on_receive = i2c_slave_receive_cb,
+#else
         .on_recv_done = i2c_slave_receive_cb,
+#endif
     };
     i2c_slave_register_event_callbacks(s_ctx.handle, &cbs, &s_ctx);
 
@@ -203,7 +215,7 @@ esp_err_t i2c_eeprom_emu_start(chip_type_t chip)
     xTaskCreatePinnedToCore(i2c_emu_task, "i2c_emu", 4096, &s_ctx, 20,
                             &s_ctx.task, 0);
 
-    ESP_LOGI(TAG, "Started emulating %s (size=%u, addr=0x%02X)",
+    ESP_LOGI(TAG, "Started emulating %s (size=%" PRIu32 ", addr=0x%02X)",
              info->name, info->total_size, info->i2c_base_addr);
     return ESP_OK;
 }

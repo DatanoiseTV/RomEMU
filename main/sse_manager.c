@@ -12,6 +12,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <inttypes.h>
 
 static const char *TAG = "sse";
 
@@ -65,7 +66,7 @@ static void send_access_events(void)
         const char *bus = (entry.bus < 3) ? bus_names[entry.bus] : "?";
         int n = snprintf(buf, sizeof(buf),
             "event: access\n"
-            "data: {\"ts\":%u,\"addr\":\"0x%06X\",\"len\":%u,"
+            "data: {\"ts\":%" PRIu32 ",\"addr\":\"0x%06" PRIX32 "\",\"len\":%u,"
             "\"op\":\"%s\",\"bus\":\"%s\",\"cmd\":\"0x%02X\",\"slot\":%u}\n\n",
             entry.timestamp_ms, entry.address, entry.length,
             op, bus, entry.command, entry.slot);
@@ -79,10 +80,10 @@ static void send_stats_event(void)
     char buf[256];
     int n = snprintf(buf, sizeof(buf),
         "event: stats\n"
-        "data: {\"spi_reads\":%llu,\"spi_writes\":%llu,\"spi_erases\":%llu,"
-        "\"spi_bytes_read\":%llu,\"spi_bytes_written\":%llu,"
-        "\"i2c_reads\":%llu,\"i2c_writes\":%llu,"
-        "\"i2c_bytes_read\":%llu,\"i2c_bytes_written\":%llu}\n\n",
+        "data: {\"spi_reads\":%" PRIu64 ",\"spi_writes\":%" PRIu64 ",\"spi_erases\":%" PRIu64 ","
+        "\"spi_bytes_read\":%" PRIu64 ",\"spi_bytes_written\":%" PRIu64 ","
+        "\"i2c_reads\":%" PRIu64 ",\"i2c_writes\":%" PRIu64 ","
+        "\"i2c_bytes_read\":%" PRIu64 ",\"i2c_bytes_written\":%" PRIu64 "}\n\n",
         g_spi_stats.total_reads, g_spi_stats.total_writes, g_spi_stats.total_erases,
         g_spi_stats.bytes_read, g_spi_stats.bytes_written,
         g_i2c_stats.total_reads, g_i2c_stats.total_writes,
@@ -96,7 +97,7 @@ static void send_status_event(void)
     int n = snprintf(buf, sizeof(buf),
         "event: status\n"
         "data: {\"heap_free\":%u,\"psram_free\":%u,"
-        "\"uptime\":%llu,\"rssi\":%d,\"ip\":\"%s\","
+        "\"uptime\":%" PRIu64 ",\"rssi\":%d,\"ip\":\"%s\","
         "\"ap_mode\":%s,\"sse_clients\":%d}\n\n",
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),

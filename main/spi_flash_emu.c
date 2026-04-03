@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 
 #include <string.h>
+#include <inttypes.h>
 
 static const char *TAG = "spi_emu";
 
@@ -41,8 +42,8 @@ typedef struct {
     bool        powered_down;
 
     /* DMA buffers - must be DMA-capable (internal SRAM or PSRAM with DMA) */
-    DMA_ATTR uint8_t    *rx_buf;
-    DMA_ATTR uint8_t    *tx_buf;
+    uint8_t    *rx_buf;
+    uint8_t    *tx_buf;
 } spi_emu_ctx_t;
 
 static spi_emu_ctx_t s_ctx;
@@ -406,8 +407,7 @@ static void process_transaction(const uint8_t *rx, uint32_t rx_len,
                               rom_store_get_active_idx(BUS_SPI));
         break;
 
-    /* Device ID / Release from power-down */
-    case SPI_CMD_READ_DEVICE_ID:
+    /* Device ID / Release from power-down (both are opcode 0xAB) */
     case SPI_CMD_RELEASE_PD:
         s_ctx.powered_down = false;
         if (s_ctx.chip_info && rx_len >= 4) {
@@ -587,7 +587,7 @@ esp_err_t spi_flash_emu_start(chip_type_t chip)
     xTaskCreatePinnedToCore(spi_emu_task, "spi_emu", 8192, &s_ctx, 24,
                             &s_ctx.task, 1);
 
-    ESP_LOGI(TAG, "Started emulating %s (size=%u, JEDEC=%02X %02X %02X, %s addr)",
+    ESP_LOGI(TAG, "Started emulating %s (size=%" PRIu32 ", JEDEC=%02X %02X %02X, %s addr)",
              info->name, info->total_size,
              info->jedec_manufacturer, info->jedec_memory_type, info->jedec_capacity,
              info->four_byte_addr ? "4-byte" : "3-byte");

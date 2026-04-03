@@ -10,7 +10,7 @@ void access_log_init(void);
 /**
  * Push a log entry from ISR context. Lock-free, single-producer safe.
  */
-void IRAM_ATTR access_log_push(const access_log_entry_t *entry);
+void access_log_push(const access_log_entry_t *entry);
 
 /**
  * Push a log entry (convenience wrapper for non-ISR context).

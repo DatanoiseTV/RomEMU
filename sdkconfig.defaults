@@ -1,5 +1,10 @@
 # Shared config (target-specific overrides in sdkconfig.defaults.esp32s3 / .esp32p4)
 
+# ESP32-P4: allow silicon rev < 3.0 (P4-Nano ships with rev 1.x)
+# These are ignored on non-P4 targets
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+
 # SPI Slave
 CONFIG_SPI_SLAVE_ISR_IN_IRAM=y
 

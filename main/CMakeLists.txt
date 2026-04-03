@@ -15,15 +15,17 @@ idf_component_register(
         "compressed_store.c"
     INCLUDE_DIRS "."
     REQUIRES
-        driver
+        esp_driver_spi
+        esp_driver_i2c
+        esp_driver_gpio
         esp_http_server
         esp_wifi
         esp_netif
         esp_eth
         nvs_flash
         esp_psram
-        mdns
         esp_timer
-        json
         spi_flash
+    PRIV_REQUIRES
+        esp_common
 )

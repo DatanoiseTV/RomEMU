@@ -1,4 +1,55 @@
 #include "wifi_manager.h"
+#include "sdkconfig.h"
+
+#if CONFIG_IDF_TARGET_ESP32P4
+
+/*
+ * ESP32-P4 does not have native WiFi. WiFi access requires the esp_wifi_remote
+ * component communicating through the C6 coprocessor. For now, provide stubs
+ * that report WiFi as unavailable. A proper implementation using
+ * esp_wifi_remote can be added later.
+ */
+
+#include "esp_log.h"
+#include <string.h>
+#include <stdio.h>
+
+static const char *TAG = "wifi";
+
+esp_err_t wifi_manager_init(void)
+{
+    ESP_LOGI(TAG, "WiFi not available on ESP32-P4 (no native radio)");
+    return ESP_OK;
+}
+
+esp_err_t wifi_manager_set_sta(const char *ssid, const char *password)
+{
+    ESP_LOGW(TAG, "WiFi not available on ESP32-P4");
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+int wifi_manager_get_info_json(char *buf, size_t buf_size)
+{
+    return snprintf(buf, buf_size,
+        "{\"mode\":\"none\",\"ip\":\"0.0.0.0\",\"rssi\":0,\"message\":\"WiFi not available on P4\"}");
+}
+
+const char *wifi_manager_get_ip(void)
+{
+    return "0.0.0.0";
+}
+
+int8_t wifi_manager_get_rssi(void)
+{
+    return 0;
+}
+
+bool wifi_manager_is_ap_mode(void)
+{
+    return false;
+}
+
+#else /* !CONFIG_IDF_TARGET_ESP32P4 */
 
 #include <string.h>
 #include "esp_log.h"
@@ -229,3 +280,5 @@ bool wifi_manager_is_ap_mode(void)
 {
     return s_ap_mode;
 }
+
+#endif /* !CONFIG_IDF_TARGET_ESP32P4 */

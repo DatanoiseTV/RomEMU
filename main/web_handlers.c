@@ -20,8 +20,15 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <inttypes.h>
 
 static const char *TAG = "web_hdlr";
+
+/* Forward declarations for slot action handlers */
+esp_err_t handler_api_slot_upload(httpd_req_t *req);
+esp_err_t handler_api_slot_insert(httpd_req_t *req);
+esp_err_t handler_api_slot_eject(httpd_req_t *req);
+esp_err_t handler_api_slot_label(httpd_req_t *req);
 
 /* ---- Static file handlers (embedded gzip content) ---- */
 
@@ -79,7 +86,7 @@ esp_err_t handler_api_status(httpd_req_t *req)
     }
 
     int n = snprintf(buf, sizeof(buf),
-        "{\"uptime\":%llu,"
+        "{\"uptime\":%" PRIu64 ","
         "\"heap_free\":%u,\"psram_free\":%u,"
         "\"wifi_ip\":\"%s\",\"wifi_rssi\":%d,\"wifi_ap_mode\":%s,"
         "\"eth_ip\":\"%s\",\"eth_connected\":%s,"
@@ -125,7 +132,7 @@ static void slot_to_json(cJSON *arr, int idx)
     cJSON_AddBoolToObject(obj, "compressed", s->compressed);
 
     char crc_str[16];
-    snprintf(crc_str, sizeof(crc_str), "%08X", s->checksum);
+    snprintf(crc_str, sizeof(crc_str), "%08" PRIX32, s->checksum);
     cJSON_AddStringToObject(obj, "checksum", crc_str);
 
     const char *chip_name = "none";
@@ -534,11 +541,11 @@ esp_err_t handler_api_stats(httpd_req_t *req)
 
     char buf[512];
     int n = snprintf(buf, sizeof(buf),
-        "{\"spi\":{\"reads\":%llu,\"writes\":%llu,\"erases\":%llu,"
-        "\"bytes_read\":%llu,\"bytes_written\":%llu},"
-        "\"i2c\":{\"reads\":%llu,\"writes\":%llu,\"erases\":%llu,"
-        "\"bytes_read\":%llu,\"bytes_written\":%llu},"
-        "\"log_overflow\":%u}",
+        "{\"spi\":{\"reads\":%" PRIu64 ",\"writes\":%" PRIu64 ",\"erases\":%" PRIu64 ","
+        "\"bytes_read\":%" PRIu64 ",\"bytes_written\":%" PRIu64 "},"
+        "\"i2c\":{\"reads\":%" PRIu64 ",\"writes\":%" PRIu64 ",\"erases\":%" PRIu64 ","
+        "\"bytes_read\":%" PRIu64 ",\"bytes_written\":%" PRIu64 "},"
+        "\"log_overflow\":%" PRIu32 "}",
         spi->total_reads, spi->total_writes, spi->total_erases,
         spi->bytes_read, spi->bytes_written,
         i2c->total_reads, i2c->total_writes, i2c->total_erases,
@@ -621,7 +628,7 @@ esp_err_t handler_api_log(httpd_req_t *req)
         cJSON_AddNumberToObject(obj, "ts", entry.timestamp_ms);
 
         char addr_str[12];
-        snprintf(addr_str, sizeof(addr_str), "0x%06X", entry.address);
+        snprintf(addr_str, sizeof(addr_str), "0x%06" PRIX32, entry.address);
         cJSON_AddStringToObject(obj, "addr", addr_str);
 
         cJSON_AddNumberToObject(obj, "len", entry.length);

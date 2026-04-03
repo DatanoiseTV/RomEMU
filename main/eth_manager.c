@@ -10,6 +10,7 @@
 #include "esp_eth.h"
 #include "esp_eth_mac.h"
 #include "esp_eth_phy.h"
+#include "esp_eth_phy_ip101.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -81,7 +82,8 @@ esp_err_t eth_manager_init(void)
     emac_cfg.clock_config.rmii.clock_mode = EMAC_CLK_EXT_IN;
     emac_cfg.clock_config.rmii.clock_gpio = GPIO_NUM_50;
 
-    esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&emac_cfg);
+    eth_mac_config_t mac_cfg = ETH_MAC_DEFAULT_CONFIG();
+    esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&emac_cfg, &mac_cfg);
 
     /* Configure IP101 PHY */
     eth_phy_config_t phy_cfg = ETH_PHY_DEFAULT_CONFIG();
