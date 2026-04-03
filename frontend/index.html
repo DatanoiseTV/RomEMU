@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ROMEMU - ESP32-S3 ROM Emulator</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="/htmx.min.js"></script>
+</head>
+<body>
+    <!-- Status Bar -->
+    <header id="status-bar">
+        <div class="status-left">
+            <h1><span class="logo">&#x25C8;</span> ROMEMU</h1>
+            <span class="subtitle">ESP32-S3 ROM Emulator</span>
+        </div>
+        <div class="status-right" id="sys-status"
+             hx-get="/api/status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+            <span class="tag loading">Loading...</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- Chip Configuration -->
+        <section class="card" id="chip-config">
+            <h2>Chip Configuration</h2>
+            <div id="chip-data" hx-get="/api/chip" hx-trigger="load" hx-swap="innerHTML">
+                <p class="muted">Loading chip database...</p>
+            </div>
+        </section>
+
+        <!-- ROM Slots -->
+        <section class="card" id="rom-slots">
+            <h2>ROM Slots</h2>
+            <div id="slots-list" hx-get="/api/slots" hx-trigger="load" hx-swap="innerHTML">
+                <p class="muted">Loading slots...</p>
+            </div>
+        </section>
+
+        <!-- Upload -->
+        <section class="card" id="upload-section">
+            <h2>Upload ROM Image</h2>
+            <form id="upload-form">
+                <div class="form-row">
+                    <label for="upload-slot">Target Slot</label>
+                    <select id="upload-slot" name="slot">
+                        <option value="0">Slot 0</option>
+                        <option value="1">Slot 1</option>
+                        <option value="2">Slot 2</option>
+                        <option value="3">Slot 3</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label for="upload-chip">Chip Type</label>
+                    <select id="upload-chip" name="chip"></select>
+                </div>
+                <div class="form-row">
+                    <label for="upload-label">Label</label>
+                    <input type="text" id="upload-label" name="label"
+                           placeholder="e.g. coreboot_v4.22" maxlength="31">
+                </div>
+                <div class="form-row">
+                    <label for="upload-file">ROM File</label>
+                    <input type="file" id="upload-file" name="romfile"
+                           accept=".bin,.rom,.img,.fd,.cap">
+                </div>
+                <div id="upload-progress" class="progress-bar" style="display:none">
+                    <div class="progress-fill" id="progress-fill"></div>
+                    <span class="progress-text" id="progress-text">0%</span>
+                </div>
+                <button type="submit" class="btn btn-primary" id="upload-btn">
+                    Upload
+                </button>
+                <div id="upload-result"></div>
+            </form>
+        </section>
+
+        <!-- Statistics -->
+        <section class="card" id="statistics">
+            <h2>Statistics</h2>
+            <div id="stats-data" hx-get="/api/stats" hx-trigger="load, every 2s" hx-swap="innerHTML">
+                <p class="muted">Loading...</p>
+            </div>
+            <button class="btn btn-secondary" hx-post="/api/stats/reset"
+                    hx-target="#stats-data" hx-swap="innerHTML"
+                    hx-on::after-request="htmx.trigger('#stats-data', 'load')">
+                Reset Statistics
+            </button>
+        </section>
+
+        <!-- Access Log -->
+        <section class="card" id="access-log">
+            <div class="card-header">
+                <h2>Access Log <span class="badge" id="log-status">Live</span></h2>
+                <div class="card-actions">
+                    <button class="btn btn-small" id="log-pause-btn" onclick="toggleLogPause()">
+                        Pause
+                    </button>
+                    <button class="btn btn-small" onclick="clearLog()">Clear</button>
+                </div>
+            </div>
+            <div class="log-container" id="log-container">
+                <table class="log-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Bus</th>
+                            <th>Op</th>
+                            <th>Address</th>
+                            <th>Length</th>
+                            <th>Cmd</th>
+                        </tr>
+                    </thead>
+                    <tbody id="log-body"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- API Documentation -->
+        <section class="card" id="api-docs">
+            <div class="card-header">
+                <h2>API Reference</h2>
+                <button class="btn btn-small" onclick="toggleApiDocs()">Show / Hide</button>
+            </div>
+            <div id="api-docs-content" class="api-docs" style="display:none">
+                <p class="muted" style="margin-bottom:12px">All endpoints return JSON. Base URL: <code>http://romemu.local</code></p>
+
+                <h3>System</h3>
+                <table class="api-table">
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/status</code></td><td>System status (uptime, heap, PSRAM, WiFi, active chips)</td></tr>
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/stats</code></td><td>Read/write/erase counters for SPI and I2C</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/stats/reset</code></td><td>Reset all statistics</td></tr>
+                </table>
+
+                <h3>ROM Slots</h3>
+                <table class="api-table">
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/slots</code></td><td>List all 4 slots with metadata</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/{n}/upload?chip={type}&amp;label={name}</code></td><td>Upload ROM image (raw binary body, <code>Content-Type: application/octet-stream</code>)</td></tr>
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/slots/{n}/download</code></td><td>Download ROM image as binary</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/{n}/insert</code></td><td>Activate slot (starts emulation on its bus)</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/{n}/eject</code></td><td>Deactivate slot (stops emulation)</td></tr>
+                    <tr><td><span class="method del">DELETE</span></td><td><code>/api/slots/{n}</code></td><td>Delete ROM image (must eject first)</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/{n}/label</code></td><td>Set label &mdash; body: <code>{"label":"name"}</code></td></tr>
+                </table>
+
+                <h3>Chip Configuration</h3>
+                <table class="api-table">
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/chip</code></td><td>List supported SPI flash and I2C EEPROM chips with JEDEC IDs</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/chip</code></td><td>Set active chip &mdash; body: <code>{"type": 4}</code> (chip_type_t enum value)</td></tr>
+                </table>
+
+                <h3>WiFi</h3>
+                <table class="api-table">
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/wifi</code></td><td>Current WiFi mode, IP, RSSI</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/wifi</code></td><td>Set STA credentials &mdash; body: <code>{"ssid":"...","password":"..."}</code></td></tr>
+                </table>
+
+                <h3>Live Events (SSE)</h3>
+                <table class="api-table">
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/events</code></td><td>Server-Sent Events stream (max 4 clients)</td></tr>
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/log</code></td><td>Last 100 access log entries as JSON array</td></tr>
+                </table>
+
+                <h3>SSE Event Types</h3>
+                <div class="api-example">
+                    <p><strong>access</strong> &mdash; emitted per bus transaction (batched every 50ms)</p>
+                    <pre>{"ts":12345,"addr":"0x000000","len":256,"op":"read","bus":"spi","cmd":"0x0B","slot":0}</pre>
+                    <p><strong>stats</strong> &mdash; emitted every 2s</p>
+                    <pre>{"spi_reads":100,"spi_writes":0,"spi_erases":0,"spi_bytes_read":25600,...}</pre>
+                    <p><strong>status</strong> &mdash; emitted every 5s</p>
+                    <pre>{"heap_free":200000,"psram_free":7000000,"uptime":3600,"rssi":-45,"ip":"192.168.1.42"}</pre>
+                </div>
+
+                <h3>Example: Upload &amp; Insert via curl</h3>
+                <div class="api-example">
+<pre>## Upload a ROM image to slot 0 as W25Q128 (type=4)
+curl -X POST "http://romemu.local/api/slots/0/upload?chip=4&amp;label=my_firmware" \
+     -H "Content-Type: application/octet-stream" \
+     --data-binary @firmware.bin
+
+## Insert slot 0 (starts SPI flash emulation)
+curl -X POST http://romemu.local/api/slots/0/insert
+
+## Check status
+curl http://romemu.local/api/status
+
+## Stream live access events
+curl -N http://romemu.local/api/events
+
+## Eject when done
+curl -X POST http://romemu.local/api/slots/0/eject</pre>
+                </div>
+
+                <h3>Chip Type IDs</h3>
+                <div class="api-example">
+<pre>SPI:  1=W25Q16  2=W25Q32  3=W25Q64  4=W25Q128  5=W25Q256  6=W25Q512  7=MX25L1606E  8=MX25L3233F
+I2C:  9=24C02  10=24C04  11=24C08  12=24C16  13=24C32  14=24C64  15=24C128  16=24C256  17=24C512</pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- WiFi Configuration -->
+        <section class="card" id="wifi-config">
+            <h2>WiFi Configuration</h2>
+            <div id="wifi-info" hx-get="/api/wifi" hx-trigger="load" hx-swap="innerHTML">
+                <p class="muted">Loading...</p>
+            </div>
+            <form hx-post="/api/wifi" hx-target="#wifi-result" hx-swap="innerHTML"
+                  hx-encoding="application/json">
+                <div class="form-row">
+                    <label for="wifi-ssid">SSID</label>
+                    <input type="text" id="wifi-ssid" name="ssid" placeholder="Network name">
+                </div>
+                <div class="form-row">
+                    <label for="wifi-pass">Password</label>
+                    <input type="password" id="wifi-pass" name="password" placeholder="Password">
+                </div>
+                <button type="submit" class="btn btn-primary">Connect</button>
+                <div id="wifi-result"></div>
+            </form>
+        </section>
+    </main>
+
+    <footer>
+        <p>ROMEMU &mdash; ESP32-S3 ROM Emulator</p>
+    </footer>
+
+    <script src="/app.js"></script>
+</body>
+</html>

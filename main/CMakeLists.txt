@@ -1,0 +1,24 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "spi_flash_emu.c"
+        "i2c_eeprom_emu.c"
+        "rom_store.c"
+        "access_log.c"
+        "wifi_manager.c"
+        "web_server.c"
+        "web_handlers.c"
+        "sse_manager.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        driver
+        esp_http_server
+        esp_wifi
+        esp_netif
+        nvs_flash
+        esp_psram
+        mdns
+        esp_timer
+        json
+        spi_flash
+)

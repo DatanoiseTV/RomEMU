@@ -1,0 +1,634 @@
+#include "web_server.h"
+#include "sse_manager.h"
+#include "rom_store.h"
+#include "spi_flash_emu.h"
+#include "i2c_eeprom_emu.h"
+#include "wifi_manager.h"
+#include "access_log.h"
+#include "spi_flash_commands.h"
+#include "romemu_common.h"
+#include "embedded_files.h"
+
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_heap_caps.h"
+#include "cJSON.h"
+
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+static const char *TAG = "web_hdlr";
+
+/* ---- Static file handlers (embedded gzip content) ---- */
+
+esp_err_t handler_index(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    return httpd_resp_send(req, (const char *)index_html_gz, index_html_gz_len);
+}
+
+esp_err_t handler_style(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/css");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    return httpd_resp_send(req, (const char *)style_css_gz, style_css_gz_len);
+}
+
+esp_err_t handler_script(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/javascript");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    return httpd_resp_send(req, (const char *)app_js_gz, app_js_gz_len);
+}
+
+esp_err_t handler_htmx(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/javascript");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    return httpd_resp_send(req, (const char *)htmx_min_js_gz, htmx_min_js_gz_len);
+}
+
+/* ---- API: System status ---- */
+
+esp_err_t handler_api_status(httpd_req_t *req)
+{
+    char buf[512];
+    int active_spi = rom_store_get_active_idx(BUS_SPI);
+    int active_i2c = rom_store_get_active_idx(BUS_I2C);
+
+    const char *spi_chip_name = "none";
+    const char *i2c_chip_name = "none";
+    if (active_spi >= 0) {
+        rom_slot_t *s = rom_store_get_slot(active_spi);
+        if (s) {
+            const spi_chip_info_t *ci = spi_chip_find(s->chip_type);
+            if (ci) spi_chip_name = ci->name;
+        }
+    }
+    if (active_i2c >= 0) {
+        rom_slot_t *s = rom_store_get_slot(active_i2c);
+        if (s) {
+            const i2c_chip_info_t *ci = i2c_chip_find(s->chip_type);
+            if (ci) i2c_chip_name = ci->name;
+        }
+    }
+
+    int n = snprintf(buf, sizeof(buf),
+        "{\"uptime\":%llu,"
+        "\"heap_free\":%u,\"psram_free\":%u,"
+        "\"wifi_ip\":\"%s\",\"wifi_rssi\":%d,\"wifi_ap_mode\":%s,"
+        "\"spi_chip\":\"%s\",\"spi_slot\":%d,"
+        "\"i2c_chip\":\"%s\",\"i2c_slot\":%d,"
+        "\"sse_clients\":%d}",
+        esp_timer_get_time() / 1000000ULL,
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+        wifi_manager_get_ip(), wifi_manager_get_rssi(),
+        wifi_manager_is_ap_mode() ? "true" : "false",
+        spi_chip_name, active_spi,
+        i2c_chip_name, active_i2c,
+        sse_manager_client_count());
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
+/* ---- API: ROM Slots ---- */
+
+static void slot_to_json(cJSON *arr, int idx)
+{
+    rom_slot_t *s = rom_store_get_slot(idx);
+    if (!s) return;
+
+    cJSON *obj = cJSON_CreateObject();
+    cJSON_AddNumberToObject(obj, "index", idx);
+    cJSON_AddBoolToObject(obj, "occupied", s->occupied);
+    cJSON_AddStringToObject(obj, "label", s->label);
+    cJSON_AddBoolToObject(obj, "inserted", s->inserted);
+    cJSON_AddNumberToObject(obj, "image_size", s->image_size);
+    cJSON_AddBoolToObject(obj, "has_data", s->data != NULL);
+
+    char crc_str[16];
+    snprintf(crc_str, sizeof(crc_str), "%08X", s->checksum);
+    cJSON_AddStringToObject(obj, "checksum", crc_str);
+
+    const char *chip_name = "none";
+    const char *bus_name = "none";
+    uint32_t chip_size = 0;
+    if (s->bus_type == BUS_SPI) {
+        const spi_chip_info_t *ci = spi_chip_find(s->chip_type);
+        if (ci) { chip_name = ci->name; chip_size = ci->total_size; }
+        bus_name = "SPI";
+    } else if (s->bus_type == BUS_I2C) {
+        const i2c_chip_info_t *ci = i2c_chip_find(s->chip_type);
+        if (ci) { chip_name = ci->name; chip_size = ci->total_size; }
+        bus_name = "I2C";
+    }
+    cJSON_AddStringToObject(obj, "chip_name", chip_name);
+    cJSON_AddStringToObject(obj, "bus", bus_name);
+    cJSON_AddNumberToObject(obj, "chip_size", chip_size);
+    cJSON_AddNumberToObject(obj, "chip_type", s->chip_type);
+
+    cJSON_AddItemToArray(arr, obj);
+}
+
+esp_err_t handler_api_slots(httpd_req_t *req)
+{
+    cJSON *arr = cJSON_CreateArray();
+    for (int i = 0; i < ROM_SLOT_MAX; i++) {
+        slot_to_json(arr, i);
+    }
+    char *json = cJSON_PrintUnformatted(arr);
+    cJSON_Delete(arr);
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t ret = httpd_resp_send(req, json, strlen(json));
+    free(json);
+    return ret;
+}
+
+/* ---- Slot action router ---- */
+
+static int parse_slot_from_uri(const char *uri)
+{
+    /* URI format: /api/slots/N/action or /api/slots/N */
+    const char *p = uri + strlen("/api/slots/");
+    if (!p || !*p) return -1;
+    int slot = atoi(p);
+    if (slot < 0 || slot >= ROM_SLOT_MAX) return -1;
+    return slot;
+}
+
+static const char *parse_action_from_uri(const char *uri)
+{
+    /* Find second '/' after /api/slots/N */
+    const char *p = uri + strlen("/api/slots/");
+    while (*p && *p != '/') p++;
+    if (*p == '/') return p + 1;
+    return NULL;
+}
+
+esp_err_t handler_api_slot_action(httpd_req_t *req)
+{
+    int slot = parse_slot_from_uri(req->uri);
+    if (slot < 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot");
+        return ESP_FAIL;
+    }
+
+    const char *action = parse_action_from_uri(req->uri);
+    if (!action) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing action");
+        return ESP_FAIL;
+    }
+
+    if (strcmp(action, "upload") == 0) {
+        return handler_api_slot_upload(req);
+    } else if (strcmp(action, "insert") == 0) {
+        return handler_api_slot_insert(req);
+    } else if (strcmp(action, "eject") == 0) {
+        return handler_api_slot_eject(req);
+    } else if (strcmp(action, "label") == 0) {
+        return handler_api_slot_label(req);
+    }
+
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Unknown action");
+    return ESP_FAIL;
+}
+
+/* ---- Upload handler (multipart/form-data) ---- */
+
+esp_err_t handler_api_slot_upload(httpd_req_t *req)
+{
+    int slot = parse_slot_from_uri(req->uri);
+    if (slot < 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot");
+        return ESP_FAIL;
+    }
+
+    rom_slot_t *s = rom_store_get_slot(slot);
+    if (s && s->inserted) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Eject slot first");
+        return ESP_FAIL;
+    }
+
+    int total = req->content_len;
+    if (total <= 0 || total > ROM_SLOT_SIZE_MAX) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Upload to slot %d: %d bytes", slot, total);
+
+    /* Allocate temporary buffer in PSRAM */
+    uint8_t *buf = heap_caps_malloc(total, MALLOC_CAP_SPIRAM);
+    if (!buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_FAIL;
+    }
+
+    /* Receive the data */
+    int received = 0;
+    while (received < total) {
+        int ret = httpd_req_recv(req, (char *)buf + received, total - received);
+        if (ret <= 0) {
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) continue;
+            ESP_LOGE(TAG, "Upload recv error: %d", ret);
+            heap_caps_free(buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive error");
+            return ESP_FAIL;
+        }
+        received += ret;
+    }
+
+    /* Parse chip_type from query string or use default */
+    char query[64] = {};
+    char chip_str[16] = {};
+    char label[32] = {};
+    chip_type_t chip_type = CHIP_W25Q128; /* default */
+
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        if (httpd_query_key_value(query, "chip", chip_str, sizeof(chip_str)) == ESP_OK) {
+            chip_type = (chip_type_t)atoi(chip_str);
+        }
+        httpd_query_key_value(query, "label", label, sizeof(label));
+    }
+
+    esp_err_t err = rom_store_upload(slot, buf, received, chip_type,
+                                      label[0] ? label : NULL);
+    heap_caps_free(buf);
+
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload failed");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    char resp[128];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"slot\":%d,\"size\":%d}", slot, received);
+    return httpd_resp_send(req, resp, strlen(resp));
+}
+
+/* ---- Download handler ---- */
+
+esp_err_t handler_api_slot_download(httpd_req_t *req)
+{
+    /* Check if this is /api/slots/N/download */
+    const char *action = parse_action_from_uri(req->uri);
+    if (!action || strcmp(action, "download") != 0) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
+        return ESP_FAIL;
+    }
+
+    int slot = parse_slot_from_uri(req->uri);
+    if (slot < 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot");
+        return ESP_FAIL;
+    }
+
+    rom_slot_t *s = rom_store_get_slot(slot);
+    if (!s || !s->occupied || !s->data) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Slot empty");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/octet-stream");
+    char disposition[64];
+    snprintf(disposition, sizeof(disposition),
+             "attachment; filename=\"slot%d.bin\"", slot);
+    httpd_resp_set_hdr(req, "Content-Disposition", disposition);
+
+    /* Send in chunks */
+    uint32_t sent = 0;
+    uint32_t size = s->image_size;
+    while (sent < size) {
+        uint32_t chunk = (size - sent > 4096) ? 4096 : (size - sent);
+        esp_err_t err = httpd_resp_send_chunk(req, (const char *)s->data + sent, chunk);
+        if (err != ESP_OK) return err;
+        sent += chunk;
+    }
+    return httpd_resp_send_chunk(req, NULL, 0); /* End chunked response */
+}
+
+/* ---- Insert / Eject ---- */
+
+esp_err_t handler_api_slot_insert(httpd_req_t *req)
+{
+    int slot = parse_slot_from_uri(req->uri);
+    if (slot < 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot");
+        return ESP_FAIL;
+    }
+
+    rom_slot_t *s = rom_store_get_slot(slot);
+    if (!s || !s->occupied || !s->data) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Slot empty or no data");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = rom_store_insert(slot);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insert failed");
+        return ESP_FAIL;
+    }
+
+    /* Start the appropriate emulator */
+    if (s->bus_type == BUS_SPI) {
+        spi_flash_emu_set_chip(s->chip_type);
+    } else if (s->bus_type == BUS_I2C) {
+        i2c_eeprom_emu_set_chip(s->chip_type);
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+esp_err_t handler_api_slot_eject(httpd_req_t *req)
+{
+    int slot = parse_slot_from_uri(req->uri);
+    if (slot < 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot");
+        return ESP_FAIL;
+    }
+
+    rom_slot_t *s = rom_store_get_slot(slot);
+    if (s && s->inserted) {
+        if (s->bus_type == BUS_SPI) {
+            spi_flash_emu_stop();
+        } else if (s->bus_type == BUS_I2C) {
+            i2c_eeprom_emu_stop();
+        }
+    }
+
+    rom_store_eject(slot);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/* ---- Delete ---- */
+
+esp_err_t handler_api_slot_delete(httpd_req_t *req)
+{
+    int slot = parse_slot_from_uri(req->uri);
+    if (slot < 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot");
+        return ESP_FAIL;
+    }
+
+    rom_slot_t *s = rom_store_get_slot(slot);
+    if (s && s->inserted) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Eject slot first");
+        return ESP_FAIL;
+    }
+
+    rom_store_delete(slot);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/* ---- Label ---- */
+
+esp_err_t handler_api_slot_label(httpd_req_t *req)
+{
+    int slot = parse_slot_from_uri(req->uri);
+    if (slot < 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot");
+        return ESP_FAIL;
+    }
+
+    char body[64] = {};
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+        return ESP_FAIL;
+    }
+
+    cJSON *json = cJSON_Parse(body);
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *label = cJSON_GetObjectItem(json, "label");
+    if (label && cJSON_IsString(label)) {
+        rom_store_set_label(slot, label->valuestring);
+    }
+    cJSON_Delete(json);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/* ---- Chip configuration ---- */
+
+esp_err_t handler_api_chip_get(httpd_req_t *req)
+{
+    cJSON *obj = cJSON_CreateObject();
+
+    /* SPI chips */
+    cJSON *spi_arr = cJSON_AddArrayToObject(obj, "spi_chips");
+    for (int i = 0; i < (int)SPI_CHIP_DB_COUNT; i++) {
+        cJSON *c = cJSON_CreateObject();
+        cJSON_AddNumberToObject(c, "type", spi_chip_db[i].type);
+        cJSON_AddStringToObject(c, "name", spi_chip_db[i].name);
+        cJSON_AddNumberToObject(c, "size", spi_chip_db[i].total_size);
+        char jedec[16];
+        snprintf(jedec, sizeof(jedec), "%02X %02X %02X",
+                 spi_chip_db[i].jedec_manufacturer,
+                 spi_chip_db[i].jedec_memory_type,
+                 spi_chip_db[i].jedec_capacity);
+        cJSON_AddStringToObject(c, "jedec", jedec);
+        cJSON_AddBoolToObject(c, "four_byte", spi_chip_db[i].four_byte_addr);
+        cJSON_AddItemToArray(spi_arr, c);
+    }
+
+    /* I2C chips */
+    cJSON *i2c_arr = cJSON_AddArrayToObject(obj, "i2c_chips");
+    for (int i = 0; i < (int)I2C_CHIP_DB_COUNT; i++) {
+        cJSON *c = cJSON_CreateObject();
+        cJSON_AddNumberToObject(c, "type", i2c_chip_db[i].type);
+        cJSON_AddStringToObject(c, "name", i2c_chip_db[i].name);
+        cJSON_AddNumberToObject(c, "size", i2c_chip_db[i].total_size);
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%02X", i2c_chip_db[i].i2c_base_addr);
+        cJSON_AddStringToObject(c, "addr", addr_str);
+        cJSON_AddItemToArray(i2c_arr, c);
+    }
+
+    char *json = cJSON_PrintUnformatted(obj);
+    cJSON_Delete(obj);
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t ret = httpd_resp_send(req, json, strlen(json));
+    free(json);
+    return ret;
+}
+
+esp_err_t handler_api_chip_set(httpd_req_t *req)
+{
+    char body[128] = {};
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+        return ESP_FAIL;
+    }
+
+    cJSON *json = cJSON_Parse(body);
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *type_item = cJSON_GetObjectItem(json, "type");
+    if (!type_item || !cJSON_IsNumber(type_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'type'");
+        return ESP_FAIL;
+    }
+
+    chip_type_t chip = (chip_type_t)type_item->valueint;
+    cJSON_Delete(json);
+
+    bus_type_t bus = chip_get_bus(chip);
+    if (bus == BUS_SPI) {
+        spi_flash_emu_set_chip(chip);
+    } else if (bus == BUS_I2C) {
+        i2c_eeprom_emu_set_chip(chip);
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/* ---- Statistics ---- */
+
+esp_err_t handler_api_stats(httpd_req_t *req)
+{
+    const emu_stats_t *spi = spi_flash_emu_get_stats();
+    const emu_stats_t *i2c = i2c_eeprom_emu_get_stats();
+
+    char buf[512];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"spi\":{\"reads\":%llu,\"writes\":%llu,\"erases\":%llu,"
+        "\"bytes_read\":%llu,\"bytes_written\":%llu},"
+        "\"i2c\":{\"reads\":%llu,\"writes\":%llu,\"erases\":%llu,"
+        "\"bytes_read\":%llu,\"bytes_written\":%llu},"
+        "\"log_overflow\":%u}",
+        spi->total_reads, spi->total_writes, spi->total_erases,
+        spi->bytes_read, spi->bytes_written,
+        i2c->total_reads, i2c->total_writes, i2c->total_erases,
+        i2c->bytes_read, i2c->bytes_written,
+        access_log_overflow_count());
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
+esp_err_t handler_api_stats_reset(httpd_req_t *req)
+{
+    spi_flash_emu_reset_stats();
+    i2c_eeprom_emu_reset_stats();
+    access_log_clear();
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/* ---- WiFi ---- */
+
+esp_err_t handler_api_wifi_get(httpd_req_t *req)
+{
+    char buf[128];
+    wifi_manager_get_info_json(buf, sizeof(buf));
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, strlen(buf));
+}
+
+esp_err_t handler_api_wifi_set(httpd_req_t *req)
+{
+    char body[128] = {};
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+        return ESP_FAIL;
+    }
+
+    cJSON *json = cJSON_Parse(body);
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *ssid = cJSON_GetObjectItem(json, "ssid");
+    cJSON *pass = cJSON_GetObjectItem(json, "password");
+
+    if (!ssid || !cJSON_IsString(ssid)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'ssid'");
+        return ESP_FAIL;
+    }
+
+    const char *password = (pass && cJSON_IsString(pass)) ? pass->valuestring : "";
+    esp_err_t err = wifi_manager_set_sta(ssid->valuestring, password);
+    cJSON_Delete(json);
+
+    httpd_resp_set_type(req, "application/json");
+    if (err == ESP_OK) {
+        return httpd_resp_sendstr(req, "{\"ok\":true}");
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"Connection failed\"}");
+}
+
+/* ---- Log (JSON snapshot) ---- */
+
+esp_err_t handler_api_log(httpd_req_t *req)
+{
+    /* Return last N entries as JSON array */
+    static const char *op_names[] = { "read", "write", "erase", "cmd" };
+    static const char *bus_names[] = { "none", "spi", "i2c" };
+
+    access_log_entry_t entry;
+    cJSON *arr = cJSON_CreateArray();
+    int count = 0;
+
+    while (count < 100 && access_log_pop(&entry)) {
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(obj, "ts", entry.timestamp_ms);
+
+        char addr_str[12];
+        snprintf(addr_str, sizeof(addr_str), "0x%06X", entry.address);
+        cJSON_AddStringToObject(obj, "addr", addr_str);
+
+        cJSON_AddNumberToObject(obj, "len", entry.length);
+        cJSON_AddStringToObject(obj, "op",
+            entry.operation < 4 ? op_names[entry.operation] : "?");
+        cJSON_AddStringToObject(obj, "bus",
+            entry.bus < 3 ? bus_names[entry.bus] : "?");
+
+        char cmd_str[6];
+        snprintf(cmd_str, sizeof(cmd_str), "0x%02X", entry.command);
+        cJSON_AddStringToObject(obj, "cmd", cmd_str);
+
+        cJSON_AddItemToArray(arr, obj);
+        count++;
+    }
+
+    char *json = cJSON_PrintUnformatted(arr);
+    cJSON_Delete(arr);
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t ret = httpd_resp_send(req, json, strlen(json));
+    free(json);
+    return ret;
+}
+
+/* ---- SSE events endpoint ---- */
+
+esp_err_t handler_api_events(httpd_req_t *req)
+{
+    return sse_manager_add_client(req);
+}
