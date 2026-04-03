@@ -12,6 +12,7 @@
 #include "esp_eth_phy.h"
 #include "esp_eth_phy_ip101.h"
 #include "driver/gpio.h"
+#include "mdns.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 
@@ -111,6 +112,12 @@ esp_err_t eth_manager_init(void)
     }
 
     ESP_LOGI(TAG, "Ethernet initialized (IP101 PHY, RMII)");
+
+    /* Register mDNS */
+    mdns_init();
+    mdns_hostname_set("romemu");
+    mdns_instance_name_set("RomEMU - ROM Emulator");
+    mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
 
     /* Wait briefly for link + DHCP */
     xEventGroupWaitBits(s_eth_event_group, ETH_CONNECTED_BIT,

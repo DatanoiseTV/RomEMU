@@ -8,6 +8,8 @@
 #include "esp_heap_caps.h"
 #include "nvs_flash.h"
 #include "esp_timer.h"
+#include "esp_netif.h"
+#include "esp_event.h"
 #include "sdkconfig.h"
 
 #include "romemu_common.h"
@@ -60,7 +62,10 @@ void app_main(void)
     /* 4. Initialize access log */
     access_log_init();
 
-    /* 5. Initialize networking */
+    /* 5. Initialize networking stack (must come before any network manager) */
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
 #if CONFIG_IDF_TARGET_ESP32P4
     /* P4-Nano: Ethernet (IP101) is primary, WiFi via C6 is secondary */
     ESP_ERROR_CHECK(eth_manager_init());
