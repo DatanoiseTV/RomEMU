@@ -4,6 +4,7 @@
 #include "spi_flash_emu.h"
 #include "i2c_eeprom_emu.h"
 #include "wifi_manager.h"
+#include "eth_manager.h"
 #include "access_log.h"
 #include "spi_flash_commands.h"
 #include "romemu_common.h"
@@ -81,6 +82,8 @@ esp_err_t handler_api_status(httpd_req_t *req)
         "{\"uptime\":%llu,"
         "\"heap_free\":%u,\"psram_free\":%u,"
         "\"wifi_ip\":\"%s\",\"wifi_rssi\":%d,\"wifi_ap_mode\":%s,"
+        "\"eth_ip\":\"%s\",\"eth_connected\":%s,"
+        "\"target\":\"%s\","
         "\"spi_chip\":\"%s\",\"spi_slot\":%d,"
         "\"i2c_chip\":\"%s\",\"i2c_slot\":%d,"
         "\"sse_clients\":%d}",
@@ -89,6 +92,13 @@ esp_err_t handler_api_status(httpd_req_t *req)
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
         wifi_manager_get_ip(), wifi_manager_get_rssi(),
         wifi_manager_is_ap_mode() ? "true" : "false",
+        eth_manager_get_ip(),
+        eth_manager_is_connected() ? "true" : "false",
+#if CONFIG_IDF_TARGET_ESP32P4
+        "ESP32-P4",
+#else
+        "ESP32-S3",
+#endif
         spi_chip_name, active_spi,
         i2c_chip_name, active_i2c,
         sse_manager_client_count());

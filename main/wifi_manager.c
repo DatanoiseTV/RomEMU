@@ -55,7 +55,7 @@ static esp_err_t start_mdns(void)
     esp_err_t err = mdns_init();
     if (err != ESP_OK) return err;
     mdns_hostname_set("romemu");
-    mdns_instance_name_set("ESP32-S3 ROM Emulator");
+    mdns_instance_name_set("RomEMU - ROM Emulator");
     mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
     return ESP_OK;
 }

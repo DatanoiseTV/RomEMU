@@ -1,10 +1,17 @@
 # RomEMU
 
-**ESP32-S3 based SPI Flash & I2C EEPROM emulator with a real-time web interface.**
+**SPI Flash & I2C EEPROM emulator with real-time web interface for ESP32-S3 and ESP32-P4.**
 
-RomEMU turns an ESP32-S3 dev board into a drop-in replacement for common SPI flash and I2C EEPROM chips. Upload firmware images over WiFi, insert them into a virtual socket, and the target system boots from them — no physical chip flashing required.
+RomEMU turns an ESP32 dev board into a drop-in replacement for common SPI flash and I2C EEPROM chips. Upload firmware images over WiFi or Ethernet, insert them into a virtual socket, and the target system boots from them — no physical chip flashing required.
 
 Built for fast iteration during firmware development, BIOS porting, coreboot bringup, and hardware reverse engineering.
+
+### Supported Boards
+
+| Board | MCU | PSRAM | Connectivity | Notes |
+|-------|-----|-------|--------------|-------|
+| ESP32-S3-DevKitC (N16R8) | ESP32-S3 @ 240 MHz | 8 MB | WiFi (built-in) | Default target |
+| ESP32-P4-Nano (Waveshare) | ESP32-P4 @ 400 MHz | up to 32 MB | Ethernet (IP101) + WiFi (via C6) | Higher performance, more PSRAM |
 
 ---
 
@@ -42,29 +49,44 @@ Chips larger than available PSRAM are supported — the emulator allocates as mu
 
 ## Hardware
 
-**Required:** ESP32-S3 dev board with PSRAM (e.g. ESP32-S3-DevKitC-1 with N16R8 module).
+**ESP32-S3:** Any dev board with PSRAM (e.g. ESP32-S3-DevKitC-1 with N16R8 module).
+**ESP32-P4:** Waveshare ESP32-P4-Nano (has ESP32-C6 for WiFi + IP101 for Ethernet + PSRAM).
 
 ### Pin Connections
 
-Connect these pins to the target system's ROM socket:
+Pin assignments differ per target. Connect these pins to the target system's ROM socket:
 
-| Function | GPIO | SPI Signal | Notes |
-|----------|------|------------|-------|
-| Chip Select | 10 | CS# | |
-| Clock | 12 | CLK | |
-| MOSI / IO0 | 11 | DI | Data In (QSPI IO0) |
-| MISO / IO1 | 13 | DO | Data Out (QSPI IO1) |
-| WP / IO2 | 14 | WP# | QSPI IO2 |
-| HD / IO3 | 9 | HOLD# | QSPI IO3 |
+**ESP32-S3 (IOMUX pins for SPI2/FSPI — minimum latency):**
 
-| Function | GPIO | Notes |
-|----------|------|-------|
+| Function | S3 GPIO | SPI Signal |
+|----------|---------|------------|
+| Chip Select | 10 | CS# |
+| Clock | 12 | CLK |
+| MOSI / IO0 | 11 | DI |
+| MISO / IO1 | 13 | DO |
+| WP / IO2 | 14 | WP# |
+| HD / IO3 | 9 | HOLD# |
 | I2C SDA | 1 | |
 | I2C SCL | 2 | |
-| Reset Out | 4 | Open-drain, active-low — connect to target RESET# |
-| Power Out | 5 | Push-pull, active-high — drives N-MOSFET gate for target power |
+| Reset Out | 4 | open-drain |
+| Power Out | 5 | MOSFET gate |
 
-GPIOs 9–14 are the IOMUX pins for SPI2 (FSPI) on the ESP32-S3, giving minimum signal propagation delay for reliable operation up to ~20–25 MHz in single SPI mode.
+**ESP32-P4-Nano (GPIO matrix routed):**
+
+| Function | P4 GPIO | SPI Signal |
+|----------|---------|------------|
+| Chip Select | 6 | CS# |
+| Clock | 8 | CLK |
+| MOSI / IO0 | 7 | DI |
+| MISO / IO1 | 9 | DO |
+| WP / IO2 | 10 | WP# |
+| HD / IO3 | 11 | HOLD# |
+| I2C SDA | 12 | |
+| I2C SCL | 13 | |
+| Reset Out | 14 | open-drain |
+| Power Out | 15 | MOSFET gate |
+
+On ESP32-S3, GPIOs 9–14 are IOMUX pins for SPI2/FSPI, giving minimum signal propagation delay for reliable operation up to ~20–25 MHz in single SPI mode. On ESP32-P4, the 400 MHz dual-core RISC-V provides ample headroom even with GPIO matrix routing.
 
 > **Note:** The target system must be configured to use SPI clock speeds the emulator can handle. Fast Read (0Bh) is recommended over plain Read (03h) as the dummy byte provides time for the ESP32-S3 to set up DMA from PSRAM.
 
@@ -81,14 +103,17 @@ GPIOs 9–14 are the IOMUX pins for SPI2 (FSPI) on the ESP32-S3, giving minimum 
 # Source ESP-IDF environment
 . $IDF_PATH/export.sh
 
-# Build everything (frontend embedding + firmware)
+# Build for ESP32-S3 (default)
 ./build.sh
+
+# Build for ESP32-P4-Nano
+./build.sh esp32p4
 
 # Flash to device
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-The `build.sh` script handles frontend compression/embedding, source file validation, and the IDF build in one step.
+The `build.sh` script handles target selection, frontend embedding, source validation, and the IDF build in one step.
 
 ## Usage
 

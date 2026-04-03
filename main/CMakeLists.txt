@@ -10,6 +10,7 @@ idf_component_register(
         "web_handlers.c"
         "sse_manager.c"
         "gpio_control.c"
+        "eth_manager.c"
         "lz4_block.c"
         "compressed_store.c"
     INCLUDE_DIRS "."
@@ -18,6 +19,7 @@ idf_component_register(
         esp_http_server
         esp_wifi
         esp_netif
+        esp_eth
         nvs_flash
         esp_psram
         mdns

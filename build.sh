@@ -13,6 +13,23 @@ info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
+# ---- Parse target ----
+
+TARGET="${1:-esp32s3}"
+case "$TARGET" in
+    esp32s3|s3)  TARGET="esp32s3" ;;
+    esp32p4|p4)  TARGET="esp32p4" ;;
+    *)
+        error "Unknown target: $TARGET"
+        echo "Usage: $0 [esp32s3|esp32p4]"
+        echo "  esp32s3  - ESP32-S3 DevKitC (default)"
+        echo "  esp32p4  - ESP32-P4-Nano (with C6 WiFi + IP101 Ethernet)"
+        exit 1
+        ;;
+esac
+
+info "Building for target: $TARGET"
+
 # ---- Check prerequisites ----
 
 if [ -z "${IDF_PATH:-}" ]; then
@@ -53,7 +70,6 @@ if [ ! -f main/embedded_files.h ]; then
     exit 1
 fi
 
-# Validate embedded_files.h has all expected symbols
 for sym in index_html_gz style_css_gz app_js_gz htmx_min_js_gz; do
     if ! grep -q "$sym" main/embedded_files.h; then
         error "embedded_files.h is missing symbol: $sym"
@@ -78,6 +94,8 @@ SOURCES=(
     main/access_log.h
     main/wifi_manager.c
     main/wifi_manager.h
+    main/eth_manager.c
+    main/eth_manager.h
     main/web_server.c
     main/web_server.h
     main/web_handlers.c
@@ -110,22 +128,27 @@ if [ "$MISSING" -ne 0 ]; then
 fi
 info "All source files present"
 
-# ---- Step 3: Set target if needed ----
+# ---- Step 3: Set target ----
 
-if [ ! -f sdkconfig ] || ! grep -q 'CONFIG_IDF_TARGET="esp32s3"' sdkconfig 2>/dev/null; then
-    info "Setting target to esp32s3..."
-    idf.py set-target esp32s3
+CURRENT_TARGET=""
+if [ -f sdkconfig ]; then
+    CURRENT_TARGET=$(grep -oP 'CONFIG_IDF_TARGET="\K[^"]+' sdkconfig 2>/dev/null || true)
+fi
+
+if [ "$CURRENT_TARGET" != "$TARGET" ]; then
+    info "Setting target to $TARGET..."
+    idf.py set-target "$TARGET"
 fi
 
 # ---- Step 4: Build ----
 
-info "Building firmware..."
+info "Building firmware for $TARGET..."
 idf.py build
 
 # ---- Step 5: Report ----
 
 echo ""
-info "=== Build successful ==="
+info "=== Build successful ($TARGET) ==="
 echo ""
 
 if [ -f build/esp32-romemu.bin ]; then
@@ -137,3 +160,8 @@ echo ""
 info "Flash with:  idf.py -p /dev/ttyUSB0 flash monitor"
 info "Or:          idf.py -p /dev/cu.usbserial-* flash monitor"
 echo ""
+
+if [ "$TARGET" = "esp32p4" ]; then
+    info "P4-Nano: Ethernet (IP101) will be available immediately."
+    info "         WiFi requires ESP32-C6 coprocessor firmware."
+fi

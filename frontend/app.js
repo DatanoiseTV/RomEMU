@@ -255,10 +255,18 @@ document.addEventListener('htmx:afterSwap', function(e) {
         try {
             const data = JSON.parse(e.detail.target.textContent);
             let html = '';
+            if (data.target) {
+                html += '<span class="tag">' + data.target + '</span>';
+            }
+            if (data.eth_connected) {
+                html += '<span class="tag inserted">ETH: ' + data.eth_ip + '</span>';
+            }
             if (data.wifi_ap_mode) {
                 html += '<span class="tag ap-mode">AP Mode</span>';
             }
-            html += '<span class="tag ip">' + data.wifi_ip + '</span>';
+            if (data.wifi_ip && data.wifi_ip !== '0.0.0.0') {
+                html += '<span class="tag ip">WiFi: ' + data.wifi_ip + '</span>';
+            }
             if (!data.wifi_ap_mode && data.wifi_rssi) {
                 html += '<span class="tag rssi">RSSI: ' + data.wifi_rssi + '</span>';
             }
