@@ -403,26 +403,114 @@ input[type="file"]::file-selector-button:hover {
     margin-bottom: 8px;
 }
 
-/* Pinout */
-.pinout-grid {
+/* Pinout header diagram */
+.header-layout {
     display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 12px;
+    margin: 8px 0;
+    overflow-x: auto;
 }
-.pinout-group {
-    flex: 1;
-    min-width: 160px;
+.header-board-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
+    align-self: center;
+    padding: 12px 2px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-body);
 }
-.pinout-group h3 {
-    font-size: 0.82rem;
+.header-diagram { min-width: 280px; }
+.header-title {
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 600;
     color: var(--text-secondary);
-    font-weight: 600;
     margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
-.pin-num {
+.header-pins {
+    background: var(--bg-body);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 4px;
+}
+.pin-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    height: 24px;
+}
+.pin-label-l, .pin-label-r {
+    font-size: 0.62rem;
     font-family: var(--font-mono);
-    color: var(--accent);
+    color: var(--text-muted);
+    min-width: 56px;
+}
+.pin-label-l { text-align: right; padding-right: 4px; }
+.pin-label-r { text-align: left; padding-left: 4px; }
+.pin-dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6rem;
+    font-family: var(--font-mono);
     font-weight: 600;
+    padding: 1px 4px;
+    margin: 1px 1px;
+    border-radius: 3px;
+    min-width: 62px;
+    text-align: center;
+    cursor: default;
+    border: 1px solid transparent;
+}
+/* Pin type colors */
+.pin-spi  { background: rgba(88,166,255,0.2);  color: var(--accent);  border-color: rgba(88,166,255,0.4); }
+.pin-i2c  { background: rgba(188,140,255,0.2); color: var(--purple);  border-color: rgba(188,140,255,0.4); }
+.pin-ctrl { background: rgba(63,185,80,0.2);   color: var(--green);   border-color: rgba(63,185,80,0.4); }
+.pin-free { background: rgba(230,237,243,0.05);color: var(--text-secondary); border-color: var(--border); }
+.pin-rsv  { background: rgba(72,79,88,0.3);    color: var(--text-muted); border-color: transparent; }
+.pin-pwr  { background: rgba(248,81,73,0.15);  color: var(--red);     border-color: transparent; }
+.pin-gnd  { background: rgba(72,79,88,0.15);   color: var(--text-muted); border-color: transparent; }
+
+/* Legend */
+.pin-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 12px;
+    justify-content: center;
+}
+.pin-leg-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+}
+.pin-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+}
+.pin-swatch.pin-spi  { background: rgba(88,166,255,0.5); }
+.pin-swatch.pin-i2c  { background: rgba(188,140,255,0.5); }
+.pin-swatch.pin-ctrl { background: rgba(63,185,80,0.5); }
+.pin-swatch.pin-free { background: rgba(230,237,243,0.15); border: 1px solid var(--border); }
+.pin-swatch.pin-rsv  { background: rgba(72,79,88,0.5); }
+.pin-swatch.pin-pwr  { background: rgba(248,81,73,0.4); }
+.pin-swatch.pin-gnd  { background: rgba(72,79,88,0.3); }
+
+@media (max-width: 640px) {
+    .header-layout { flex-direction: column; align-items: center; }
+    .header-board-label { writing-mode: horizontal-tb; padding: 4px 12px; }
 }
 
 /* GPIO control */

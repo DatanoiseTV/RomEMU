@@ -181,33 +181,45 @@ function handleUpload(e) {
 
     progressBar.style.display = 'block';
     uploadBtn.disabled = true;
-    resultDiv.innerHTML = '<span style="color:var(--text-secondary)">Compressing...</span>';
     progressFill.style.width = '0%';
-    progressText.textContent = 'Compressing...';
 
-    /* Eject first, then compress client-side, then upload */
+    /* Skip compression for small files (<64KB) — not worth it */
+    const MIN_COMPRESS_SIZE = 65536;
+    const useCompression = file.size >= MIN_COMPRESS_SIZE && typeof CompressionStream !== 'undefined';
+
+    resultDiv.innerHTML = useCompression ?
+        '<span style="color:var(--text-secondary)">Compressing...</span>' :
+        '<span style="color:var(--text-secondary)">Uploading...</span>';
+    progressText.textContent = useCompression ? 'Compressing...' : '0%';
+
+    /* Eject first, then optionally compress, then upload */
     fetch('/api/slots/0/eject', { method: 'POST' }).then(function() {
-        return compressFile(file);
-    }).then(function(compressed) {
-        const ratio = (file.size / compressed.byteLength).toFixed(1);
-        resultDiv.innerHTML = '<span style="color:var(--text-secondary)">Compressed: ' +
-            formatBytes(file.size) + ' &rarr; ' + formatBytes(compressed.byteLength) +
-            ' (' + ratio + ':1). Uploading...</span>';
+        return useCompression ? compressFile(file) : file.arrayBuffer();
+    }).then(function(data) {
+        var ratio = useCompression ? (file.size / data.byteLength).toFixed(1) : null;
+        if (useCompression) {
+            resultDiv.innerHTML = '<span style="color:var(--text-secondary)">Compressed: ' +
+                formatBytes(file.size) + ' &rarr; ' + formatBytes(data.byteLength) +
+                ' (' + ratio + ':1). Uploading...</span>';
+        }
 
         const url = '/api/slots/0/upload?chip=' + chip +
             '&label=' + encodeURIComponent(label) +
-            '&original_size=' + file.size;
+            (useCompression ? '&original_size=' + file.size : '');
         const xhr = new XMLHttpRequest();
         xhr.open('POST', url, true);
         xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-        xhr.setRequestHeader('X-Compressed', 'deflate');
-        xhr.setRequestHeader('X-Original-Size', file.size.toString());
+        if (useCompression) {
+            xhr.setRequestHeader('X-Compressed', 'deflate');
+            xhr.setRequestHeader('X-Original-Size', file.size.toString());
+        }
 
+        var sendSize = data.byteLength;
         xhr.upload.addEventListener('progress', function(e) {
             if (e.lengthComputable) {
                 const pct = Math.round((e.loaded / e.total) * 100);
                 progressFill.style.width = pct + '%';
-                progressText.textContent = pct + '% (' + formatBytes(e.loaded) + ' / ' + formatBytes(compressed.byteLength) + ')';
+                progressText.textContent = pct + '% (' + formatBytes(e.loaded) + ' / ' + formatBytes(sendSize) + ')';
             }
         });
 
@@ -218,18 +230,19 @@ function handleUpload(e) {
                 progressText.textContent = '100%';
                 resultDiv.innerHTML = '<span style="color:var(--green)">Upload OK! Inserting...</span>';
                 fetch('/api/slots/0/insert', { method: 'POST' }).then(function() {
-                    resultDiv.innerHTML = '<span style="color:var(--green)">Uploaded &amp; inserted! (' + ratio + ':1 compression)</span>';
-                    /* SSE slot event will auto-refresh the UI */
+                    var msg = 'Uploaded &amp; inserted!';
+                    if (ratio) msg += ' (' + ratio + ':1 compression)';
+                    resultDiv.innerHTML = '<span style="color:var(--green)">' + msg + '</span>';
                 });
             } else {
                 resultDiv.innerHTML = '<span style="color:var(--red)">Upload failed: ' + xhr.statusText + '</span>';
             }
         };
         xhr.onerror = function() { uploadBtn.disabled = false; resultDiv.innerHTML = '<span style="color:var(--red)">Upload error</span>'; };
-        xhr.send(compressed);
+        xhr.send(data);
     }).catch(function(err) {
         uploadBtn.disabled = false;
-        resultDiv.innerHTML = '<span style="color:var(--red)">Compression failed: ' + err.message + '</span>';
+        resultDiv.innerHTML = '<span style="color:var(--red)">Upload failed: ' + err.message + '</span>';
     });
 }
 
@@ -356,30 +369,101 @@ function slotAction(action) {
 }
 
 function renderPinout(p) {
-    let h = '<p class="muted" style="margin-bottom:8px">Board: <strong>' + p.target + '</strong> &mdash; ' + p.notes + '</p>';
-    h += '<div class="pinout-grid">';
+    /* Build a set of used GPIOs for highlighting */
+    var used = {};
+    used[p.spi.cs]   = {fn:'CS#',      cls:'pin-spi'};
+    used[p.spi.clk]  = {fn:'CLK',      cls:'pin-spi'};
+    used[p.spi.mosi] = {fn:'MOSI/IO0', cls:'pin-spi'};
+    used[p.spi.miso] = {fn:'MISO/IO1', cls:'pin-spi'};
+    used[p.spi.wp]   = {fn:'WP/IO2',   cls:'pin-spi'};
+    used[p.spi.hd]   = {fn:'HD/IO3',   cls:'pin-spi'};
+    used[p.i2c.sda]  = {fn:'SDA',      cls:'pin-i2c'};
+    used[p.i2c.scl]  = {fn:'SCL',      cls:'pin-i2c'};
+    used[p.control.reset] = {fn:'RESET#', cls:'pin-ctrl'};
+    used[p.control.power] = {fn:'POWER',  cls:'pin-ctrl'};
 
-    h += '<div class="pinout-group"><h3>SPI Flash</h3><table class="log-table" style="font-size:0.82rem">';
-    h += '<tr><td>CS#</td><td class="pin-num">GPIO ' + p.spi.cs + '</td></tr>';
-    h += '<tr><td>CLK</td><td class="pin-num">GPIO ' + p.spi.clk + '</td></tr>';
-    h += '<tr><td>MOSI / IO0</td><td class="pin-num">GPIO ' + p.spi.mosi + '</td></tr>';
-    h += '<tr><td>MISO / IO1</td><td class="pin-num">GPIO ' + p.spi.miso + '</td></tr>';
-    h += '<tr><td>WP / IO2</td><td class="pin-num">GPIO ' + p.spi.wp + '</td></tr>';
-    h += '<tr><td>HD / IO3</td><td class="pin-num">GPIO ' + p.spi.hd + '</td></tr>';
-    h += '</table></div>';
+    /* P4-Nano header layout (from Waveshare schematic) */
+    var leftHeader = [
+        [{t:'3V3',     g:-1, c:'pin-pwr'}, {t:'5V',       g:-1, c:'pin-pwr'}],
+        [{t:'GPIO7',   g:7,  c:'pin-rsv', alt:'SDA'}, {t:'5V', g:-1, c:'pin-pwr'}],
+        [{t:'GPIO8',   g:8,  c:'pin-rsv', alt:'SCL'}, {t:'GND', g:-1, c:'pin-gnd'}],
+        [{t:'GPIO23',  g:23, c:'pin-free'}, {t:'GPIO37', g:37, c:'pin-rsv', alt:'UART0'}],
+        [{t:'GND',     g:-1, c:'pin-gnd'}, {t:'GPIO38', g:38, c:'pin-rsv', alt:'UART0'}],
+        [{t:'GPIO5',   g:5,  c:'pin-free'}, {t:'GPIO4',  g:4,  c:'pin-free'}],
+        [{t:'GPIO20',  g:20, c:'pin-free'}, {t:'GND',    g:-1, c:'pin-gnd'}],
+        [{t:'GPIO21',  g:21, c:'pin-free'}, {t:'GPIO22', g:22, c:'pin-free'}],
+        [{t:'3V3',     g:-1, c:'pin-pwr'}, {t:'GPIO24', g:24, c:'pin-rsv', alt:'USB'}],
+        [{t:'GPIO25',  g:25, c:'pin-rsv', alt:'USB'}, {t:'GND', g:-1, c:'pin-gnd'}],
+        [{t:'GPIO26',  g:26, c:'pin-rsv', alt:'USB'}, {t:'GPIO27', g:27, c:'pin-rsv', alt:'USB'}],
+        [{t:'GPIO32',  g:32, c:'pin-free'}, {t:'GPIO33', g:33, c:'pin-free'}],
+        [{t:'GND',     g:-1, c:'pin-gnd'}, {t:'GPIO36', g:36, c:'pin-free'}],
+    ];
 
-    h += '<div class="pinout-group"><h3>I2C EEPROM</h3><table class="log-table" style="font-size:0.82rem">';
-    h += '<tr><td>SDA</td><td class="pin-num">GPIO ' + p.i2c.sda + '</td></tr>';
-    h += '<tr><td>SCL</td><td class="pin-num">GPIO ' + p.i2c.scl + '</td></tr>';
-    h += '</table></div>';
+    var rightHeader = [
+        [{t:'5V',      g:-1, c:'pin-pwr'}, {t:'LDO_VO4', g:-1, c:'pin-pwr'}],
+        [{t:'GND',     g:-1, c:'pin-gnd'}, {t:'GND',      g:-1, c:'pin-gnd'}],
+        [{t:'3V3',     g:-1, c:'pin-pwr'}, {t:'GPIO0',    g:0,  c:'pin-rsv', alt:'XTAL'}],
+        [{t:'GND',     g:-1, c:'pin-gnd'}, {t:'GPIO1',    g:1,  c:'pin-rsv', alt:'XTAL'}],
+        [{t:'GPIO3',   g:3,  c:'pin-free'}, {t:'GND',     g:-1, c:'pin-gnd'}],
+        [{t:'GPIO2',   g:2,  c:'pin-free'}, {t:'GPIO6',   g:6,  c:'pin-free'}],
+        [{t:'GPIO54',  g:54, c:'pin-free'}, {t:'GPIO53',  g:53, c:'pin-free'}],
+        [{t:'GPIO47',  g:47, c:'pin-free'}, {t:'GPIO48',  g:48, c:'pin-free'}],
+        [{t:'GPIO46',  g:46, c:'pin-free'}, {t:'GND',     g:-1, c:'pin-gnd'}],
+        [{t:'GPIO45',  g:45, c:'pin-free'}, {t:'C6_RXD',  g:-2, c:'pin-rsv', alt:'C6'}],
+        [{t:'C6_IO12', g:-2, c:'pin-rsv', alt:'C6'}, {t:'C6_TXD', g:-2, c:'pin-rsv', alt:'C6'}],
+        [{t:'C6_IO13', g:-2, c:'pin-rsv', alt:'C6'}, {t:'C6_IO9', g:-2, c:'pin-rsv', alt:'C6'}],
+        [{t:'GND',     g:-1, c:'pin-gnd'}, {t:'GND',      g:-1, c:'pin-gnd'}],
+    ];
 
-    h += '<div class="pinout-group"><h3>Target Control</h3><table class="log-table" style="font-size:0.82rem">';
-    h += '<tr><td>RESET# (open-drain)</td><td class="pin-num">GPIO ' + p.control.reset + '</td></tr>';
-    h += '<tr><td>POWER (MOSFET gate)</td><td class="pin-num">GPIO ' + p.control.power + '</td></tr>';
-    h += '</table></div>';
+    /* Override colors for used pins */
+    function applyUsed(header) {
+        for (var r = 0; r < header.length; r++) {
+            for (var c = 0; c < 2; c++) {
+                var pin = header[r][c];
+                if (pin.g > 0 && used[pin.g]) {
+                    pin.c = used[pin.g].cls;
+                    pin.fn = used[pin.g].fn;
+                }
+            }
+        }
+    }
+    applyUsed(leftHeader);
+    applyUsed(rightHeader);
 
+    function renderHeader(name, rows) {
+        var h = '<div class="header-diagram"><div class="header-title">' + name + '</div>';
+        h += '<div class="header-pins">';
+        for (var r = 0; r < rows.length; r++) {
+            var L = rows[r][0], R = rows[r][1];
+            h += '<div class="pin-row">';
+            h += '<span class="pin-label-l">' + (L.fn || L.alt || '') + '</span>';
+            h += '<span class="pin-dot ' + L.c + '" title="' + L.t + (L.fn ? ' → '+L.fn : '') + '">' + L.t + '</span>';
+            h += '<span class="pin-dot ' + R.c + '" title="' + R.t + (R.fn ? ' → '+R.fn : '') + '">' + R.t + '</span>';
+            h += '<span class="pin-label-r">' + (R.fn || R.alt || '') + '</span>';
+            h += '</div>';
+        }
+        h += '</div></div>';
+        return h;
+    }
+
+    var h = '<p class="muted" style="margin-bottom:12px">Board: <strong>' + p.target + '</strong></p>';
+    h += '<div class="header-layout">';
+    h += renderHeader('Left Header', leftHeader);
+    h += '<div class="header-board-label">ESP32-P4-NANO</div>';
+    h += renderHeader('Right Header', rightHeader);
     h += '</div>';
-    h += '<p class="muted" style="margin-top:8px;font-size:0.75rem">Connect GND between boards. Do not bridge power rails unless intended.</p>';
+
+    h += '<div class="pin-legend">';
+    h += '<span class="pin-leg-item"><span class="pin-swatch pin-spi"></span>SPI Flash</span>';
+    h += '<span class="pin-leg-item"><span class="pin-swatch pin-i2c"></span>I2C EEPROM</span>';
+    h += '<span class="pin-leg-item"><span class="pin-swatch pin-ctrl"></span>Control</span>';
+    h += '<span class="pin-leg-item"><span class="pin-swatch pin-free"></span>Available</span>';
+    h += '<span class="pin-leg-item"><span class="pin-swatch pin-rsv"></span>Reserved</span>';
+    h += '<span class="pin-leg-item"><span class="pin-swatch pin-pwr"></span>Power</span>';
+    h += '<span class="pin-leg-item"><span class="pin-swatch pin-gnd"></span>GND</span>';
+    h += '</div>';
+
+    h += '<p class="muted" style="margin-top:8px;font-size:0.75rem">Connect GND between boards. Do not bridge power rails unless intended. I2C needs external pull-ups if target has none.</p>';
     return h;
 }
 
