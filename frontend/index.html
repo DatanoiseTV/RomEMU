@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ROMEMU - ESP32-S3 ROM Emulator</title>
+    <title>ROMEMU - ROM Emulator</title>
     <link rel="stylesheet" href="/style.css">
     <script src="/htmx.min.js"></script>
 </head>
@@ -12,7 +12,7 @@
     <header id="status-bar">
         <div class="status-left">
             <h1><span class="logo">&#x25C8;</span> ROMEMU</h1>
-            <span class="subtitle">ESP32-S3 ROM Emulator</span>
+            <span class="subtitle">ROM Emulator</span>
         </div>
         <div class="status-right" id="sys-status"
              hx-get="/api/status" hx-trigger="load, every 5s" hx-swap="innerHTML">
@@ -21,39 +21,23 @@
     </header>
 
     <main>
-        <!-- Chip Configuration -->
-        <section class="card" id="chip-config">
-            <h2>Chip Configuration</h2>
-            <div id="chip-data" hx-get="/api/chip" hx-trigger="load" hx-swap="innerHTML">
-                <p class="muted">Loading chip database...</p>
+        <!-- ROM Image -->
+        <section class="card" id="rom-image">
+            <h2>ROM Image</h2>
+            <div id="image-status" hx-get="/api/slots" hx-trigger="load" hx-swap="innerHTML">
+                <p class="muted">Loading...</p>
             </div>
         </section>
 
-        <!-- ROM Slots -->
-        <section class="card" id="rom-slots">
-            <h2>ROM Slots</h2>
-            <div id="slots-list" hx-get="/api/slots" hx-trigger="load" hx-swap="innerHTML">
-                <p class="muted">Loading slots...</p>
-            </div>
-        </section>
-
-        <!-- Upload -->
+        <!-- Upload & Chip Selection -->
         <section class="card" id="upload-section">
             <h2>Upload ROM Image</h2>
             <form id="upload-form">
                 <div class="form-row">
-                    <label for="upload-slot">Target Slot</label>
-                    <select id="upload-slot" name="slot">
-                        <option value="0">Slot 0</option>
-                        <option value="1">Slot 1</option>
-                        <option value="2">Slot 2</option>
-                        <option value="3">Slot 3</option>
-                    </select>
-                </div>
-                <div class="form-row">
                     <label for="upload-chip">Chip Type</label>
                     <select id="upload-chip" name="chip"></select>
                 </div>
+                <div id="chip-detail" class="chip-detail"></div>
                 <div class="form-row">
                     <label for="upload-label">Label</label>
                     <input type="text" id="upload-label" name="label"
@@ -69,10 +53,21 @@
                     <span class="progress-text" id="progress-text">0%</span>
                 </div>
                 <button type="submit" class="btn btn-primary" id="upload-btn">
-                    Upload
+                    Upload &amp; Insert
                 </button>
                 <div id="upload-result"></div>
             </form>
+        </section>
+
+        <!-- Chip Database Reference -->
+        <section class="card" id="chip-config">
+            <div class="card-header">
+                <h2>Supported Chips</h2>
+                <button class="btn btn-small" onclick="toggleChipDb()">Show / Hide</button>
+            </div>
+            <div id="chip-data" hx-get="/api/chip" hx-trigger="load" hx-swap="innerHTML" style="display:none">
+                <p class="muted">Loading chip database...</p>
+            </div>
         </section>
 
         <!-- GPIO Control -->
@@ -83,14 +78,14 @@
             </div>
             <div class="gpio-buttons">
                 <div class="gpio-group">
-                    <h3 class="gpio-label">Reset (GPIO 4)</h3>
+                    <h3 class="gpio-label">Reset</h3>
                     <button class="btn btn-small" onclick="gpioAction('reset/assert')">Assert</button>
                     <button class="btn btn-small" onclick="gpioAction('reset/release')">Release</button>
                     <button class="btn btn-primary btn-small" onclick="gpioAction('reset/pulse',{duration:100})">Pulse 100ms</button>
                     <button class="btn btn-small" onclick="gpioAction('reset/pulse',{duration:500})">Pulse 500ms</button>
                 </div>
                 <div class="gpio-group">
-                    <h3 class="gpio-label">Power (GPIO 5)</h3>
+                    <h3 class="gpio-label">Power</h3>
                     <button class="btn btn-insert btn-small" onclick="gpioAction('power/on')">Power ON</button>
                     <button class="btn btn-eject btn-small" onclick="gpioAction('power/off')">Power OFF</button>
                     <button class="btn btn-primary btn-small" onclick="gpioAction('power/cycle',{duration:500,settle:200})">Power Cycle</button>
@@ -116,9 +111,7 @@
             <div class="card-header">
                 <h2>Access Log <span class="badge" id="log-status">Live</span></h2>
                 <div class="card-actions">
-                    <button class="btn btn-small" id="log-pause-btn" onclick="toggleLogPause()">
-                        Pause
-                    </button>
+                    <button class="btn btn-small" id="log-pause-btn" onclick="toggleLogPause()">Pause</button>
                     <button class="btn btn-small" onclick="clearLog()">Clear</button>
                 </div>
             </div>
@@ -139,7 +132,7 @@
             </div>
         </section>
 
-        <!-- API Documentation -->
+        <!-- API Reference -->
         <section class="card" id="api-docs">
             <div class="card-header">
                 <h2>API Reference</h2>
@@ -148,88 +141,38 @@
             <div id="api-docs-content" class="api-docs" style="display:none">
                 <p class="muted" style="margin-bottom:12px">All endpoints return JSON. Base URL: <code>http://romemu.local</code></p>
 
+                <h3>ROM Image</h3>
+                <table class="api-table">
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/slots</code></td><td>Current image status</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/0/upload?chip={type}&amp;label={name}</code></td><td>Upload ROM (raw binary body)</td></tr>
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/slots/0/download</code></td><td>Download current image</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/0/insert</code></td><td>Start emulation</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/0/eject</code></td><td>Stop emulation</td></tr>
+                    <tr><td><span class="method del">DELETE</span></td><td><code>/api/slots/0</code></td><td>Delete image</td></tr>
+                </table>
+
                 <h3>System</h3>
                 <table class="api-table">
-                    <tr><td><span class="method get">GET</span></td><td><code>/api/status</code></td><td>System status (uptime, heap, PSRAM, WiFi, active chips)</td></tr>
-                    <tr><td><span class="method get">GET</span></td><td><code>/api/stats</code></td><td>Read/write/erase counters for SPI and I2C</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/stats/reset</code></td><td>Reset all statistics</td></tr>
-                </table>
-
-                <h3>ROM Slots</h3>
-                <table class="api-table">
-                    <tr><td><span class="method get">GET</span></td><td><code>/api/slots</code></td><td>List all 4 slots with metadata</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/{n}/upload?chip={type}&amp;label={name}</code></td><td>Upload ROM image (raw binary body, <code>Content-Type: application/octet-stream</code>)</td></tr>
-                    <tr><td><span class="method get">GET</span></td><td><code>/api/slots/{n}/download</code></td><td>Download ROM image as binary</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/{n}/insert</code></td><td>Activate slot (starts emulation on its bus)</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/{n}/eject</code></td><td>Deactivate slot (stops emulation)</td></tr>
-                    <tr><td><span class="method del">DELETE</span></td><td><code>/api/slots/{n}</code></td><td>Delete ROM image (must eject first)</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/slots/{n}/label</code></td><td>Set label &mdash; body: <code>{"label":"name"}</code></td></tr>
-                </table>
-
-                <h3>Chip Configuration</h3>
-                <table class="api-table">
-                    <tr><td><span class="method get">GET</span></td><td><code>/api/chip</code></td><td>List supported SPI flash and I2C EEPROM chips with JEDEC IDs</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/chip</code></td><td>Set active chip &mdash; body: <code>{"type": 4}</code> (chip_type_t enum value)</td></tr>
-                </table>
-
-                <h3>WiFi</h3>
-                <table class="api-table">
-                    <tr><td><span class="method get">GET</span></td><td><code>/api/wifi</code></td><td>Current WiFi mode, IP, RSSI</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/wifi</code></td><td>Set STA credentials &mdash; body: <code>{"ssid":"...","password":"..."}</code></td></tr>
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/status</code></td><td>System status</td></tr>
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/chip</code></td><td>Supported chip database</td></tr>
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/stats</code></td><td>R/W/erase counters</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/stats/reset</code></td><td>Reset statistics</td></tr>
                 </table>
 
                 <h3>GPIO Control</h3>
                 <table class="api-table">
-                    <tr><td><span class="method get">GET</span></td><td><code>/api/gpio</code></td><td>Current reset &amp; power pin state</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/reset/assert</code></td><td>Hold target in reset</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/reset/release</code></td><td>Release target from reset</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/reset/pulse</code></td><td>Pulse reset &mdash; body: <code>{"duration": 100}</code> (ms)</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/reset/sequence</code></td><td>Assert, wait, release, wait &mdash; body: <code>{"duration": 100, "post_delay": 100}</code></td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/power/on</code></td><td>Power on (MOSFET gate high)</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/power/off</code></td><td>Power off (MOSFET gate low)</td></tr>
-                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/power/cycle</code></td><td>Power off, wait, on &mdash; body: <code>{"duration": 500, "settle": 200}</code></td></tr>
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/gpio</code></td><td>Pin state</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/reset/pulse</code></td><td>Pulse reset <code>{"duration":100}</code></td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/power/cycle</code></td><td>Power cycle <code>{"duration":500,"settle":200}</code></td></tr>
                 </table>
 
-                <h3>Live Events (SSE)</h3>
-                <table class="api-table">
-                    <tr><td><span class="method get">GET</span></td><td><code>/api/events</code></td><td>Server-Sent Events stream (max 4 clients)</td></tr>
-                    <tr><td><span class="method get">GET</span></td><td><code>/api/log</code></td><td>Last 100 access log entries as JSON array</td></tr>
-                </table>
-
-                <h3>SSE Event Types</h3>
+                <h3>Example: curl</h3>
                 <div class="api-example">
-                    <p><strong>access</strong> &mdash; emitted per bus transaction (batched every 50ms)</p>
-                    <pre>{"ts":12345,"addr":"0x000000","len":256,"op":"read","bus":"spi","cmd":"0x0B","slot":0}</pre>
-                    <p><strong>stats</strong> &mdash; emitted every 2s</p>
-                    <pre>{"spi_reads":100,"spi_writes":0,"spi_erases":0,"spi_bytes_read":25600,...}</pre>
-                    <p><strong>status</strong> &mdash; emitted every 5s</p>
-                    <pre>{"heap_free":200000,"psram_free":7000000,"uptime":3600,"rssi":-45,"ip":"192.168.1.42"}</pre>
-                </div>
-
-                <h3>Example: Upload &amp; Insert via curl</h3>
-                <div class="api-example">
-<pre>## Upload a ROM image to slot 0 as W25Q128 (type=4)
-curl -X POST "http://romemu.local/api/slots/0/upload?chip=4&amp;label=my_firmware" \
-     -H "Content-Type: application/octet-stream" \
-     --data-binary @firmware.bin
-
-## Insert slot 0 (starts SPI flash emulation)
+<pre>curl -X POST "http://romemu.local/api/slots/0/upload?chip=4&amp;label=fw" \
+     -H "Content-Type: application/octet-stream" --data-binary @firmware.bin
 curl -X POST http://romemu.local/api/slots/0/insert
-
-## Check status
-curl http://romemu.local/api/status
-
-## Stream live access events
-curl -N http://romemu.local/api/events
-
-## Eject when done
-curl -X POST http://romemu.local/api/slots/0/eject</pre>
-                </div>
-
-                <h3>Chip Type IDs</h3>
-                <div class="api-example">
-<pre>SPI:  1=W25Q16  2=W25Q32  3=W25Q64  4=W25Q128  5=W25Q256  6=W25Q512  7=MX25L1606E  8=MX25L3233F
-I2C:  9=24C02  10=24C04  11=24C08  12=24C16  13=24C32  14=24C64  15=24C128  16=24C256  17=24C512</pre>
+curl -X POST http://romemu.local/api/gpio/reset/pulse -d '{"duration":100}'
+curl -N http://romemu.local/api/events</pre>
                 </div>
             </div>
         </section>
@@ -257,7 +200,7 @@ I2C:  9=24C02  10=24C04  11=24C08  12=24C16  13=24C32  14=24C64  15=24C128  16=2
     </main>
 
     <footer>
-        <p>ROMEMU &mdash; ESP32-S3 ROM Emulator</p>
+        <p>ROMEMU &mdash; ROM Emulator</p>
     </footer>
 
     <script src="/app.js"></script>

@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-#define ROM_SLOT_MAX        4
+#define ROM_SLOT_MAX        1
 #define ACCESS_LOG_ENTRIES  8192
 #define MAX_SSE_CLIENTS     4
 

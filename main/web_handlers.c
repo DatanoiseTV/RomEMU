@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <sys/socket.h>
 
 static const char *TAG = "web_hdlr";
 
@@ -252,6 +253,11 @@ esp_err_t handler_api_slot_upload(httpd_req_t *req)
 
     ESP_LOGI(TAG, "Upload to slot %d: %d bytes", slot, total);
 
+    /* Increase socket recv timeout for large uploads (default is too short) */
+    int sockfd = httpd_req_to_sockfd(req);
+    struct timeval tv = { .tv_sec = 30, .tv_usec = 0 };
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
     /* Allocate temporary buffer in PSRAM */
     uint8_t *buf = heap_caps_malloc(total, MALLOC_CAP_SPIRAM);
     if (!buf) {
@@ -261,17 +267,38 @@ esp_err_t handler_api_slot_upload(httpd_req_t *req)
 
     /* Receive the data */
     int received = 0;
+    int timeout_count = 0;
+    int last_log_pct = -1;
     while (received < total) {
         int ret = httpd_req_recv(req, (char *)buf + received, total - received);
         if (ret <= 0) {
-            if (ret == HTTPD_SOCK_ERR_TIMEOUT) continue;
-            ESP_LOGE(TAG, "Upload recv error: %d", ret);
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+                timeout_count++;
+                if (timeout_count > 10) {
+                    ESP_LOGE(TAG, "Upload stalled at %d/%d bytes", received, total);
+                    heap_caps_free(buf);
+                    httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "Upload timeout");
+                    return ESP_FAIL;
+                }
+                continue;
+            }
+            ESP_LOGE(TAG, "Upload recv error: %d at %d/%d bytes", ret, received, total);
             heap_caps_free(buf);
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive error");
             return ESP_FAIL;
         }
+        timeout_count = 0;
         received += ret;
+
+        /* Log progress every 10% */
+        int pct = (int)((int64_t)received * 100 / total);
+        if (pct / 10 > last_log_pct / 10) {
+            ESP_LOGI(TAG, "Upload: %d%% (%d/%d bytes)", pct, received, total);
+            last_log_pct = pct;
+        }
     }
+
+    ESP_LOGI(TAG, "Upload received: %d bytes", received);
 
     /* Parse chip_type from query string or use default */
     char query[64] = {};
