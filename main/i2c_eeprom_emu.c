@@ -190,6 +190,7 @@ esp_err_t i2c_eeprom_emu_start(chip_type_t chip)
         .scl_io_num = PIN_I2C_SCL,
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .send_buf_depth = 256,
+        .receive_buf_depth = 256,
         .slave_addr = info->i2c_base_addr,
         .addr_bit_len = I2C_ADDR_BIT_LEN_7,
     };
