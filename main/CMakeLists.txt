@@ -10,6 +10,8 @@ idf_component_register(
         "web_handlers.c"
         "sse_manager.c"
         "gpio_control.c"
+        "lz4_block.c"
+        "compressed_store.c"
     INCLUDE_DIRS "."
     REQUIRES
         driver

@@ -85,6 +85,10 @@ SOURCES=(
     main/sse_manager.h
     main/gpio_control.c
     main/gpio_control.h
+    main/lz4_block.c
+    main/lz4_block.h
+    main/compressed_store.c
+    main/compressed_store.h
     main/romemu_common.h
     main/pin_config.h
     main/embedded_files.h

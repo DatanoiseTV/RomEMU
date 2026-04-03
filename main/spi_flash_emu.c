@@ -1,6 +1,7 @@
 #include "spi_flash_emu.h"
 #include "spi_flash_commands.h"
 #include "rom_store.h"
+#include "compressed_store.h"
 #include "access_log.h"
 #include "pin_config.h"
 
@@ -80,7 +81,7 @@ static void handle_read_command(const uint8_t *rx, uint32_t rx_len,
                                 uint8_t *tx, uint32_t tx_size, uint8_t cmd)
 {
     rom_slot_t *slot = rom_store_get_active(BUS_SPI);
-    if (!slot || !slot->data || !s_ctx.chip_info) return;
+    if (!slot || (!slot->data && !slot->cstore) || !s_ctx.chip_info) return;
 
     bool use_4byte = s_ctx.four_byte_mode || s_ctx.chip_info->four_byte_addr;
     int addr_len = use_4byte ? 4 : 3;
@@ -123,12 +124,17 @@ static void handle_read_command(const uint8_t *rx, uint32_t rx_len,
         data_len = tx_size - header_len;
     }
 
-    /* Copy ROM data into TX buffer at the right offset.
-     * Addresses within alloc_size read from PSRAM; beyond that return 0xFF. */
-    uint32_t alloc = slot->alloc_size;
-    for (uint32_t i = 0; i < data_len; i++) {
-        uint32_t eff_addr = (addr + i) % chip_size;
-        tx[header_len + i] = (eff_addr < alloc) ? slot->data[eff_addr] : 0xFF;
+    /* Read ROM data into TX buffer using compressed or raw store */
+    if (slot->compressed && slot->cstore) {
+        cstore_read(slot->cstore, addr, tx + header_len, data_len);
+    } else if (slot->data) {
+        uint32_t alloc = slot->alloc_size;
+        for (uint32_t i = 0; i < data_len; i++) {
+            uint32_t eff_addr = (addr + i) % chip_size;
+            tx[header_len + i] = (eff_addr < alloc) ? slot->data[eff_addr] : 0xFF;
+        }
+    } else {
+        memset(tx + header_len, 0xFF, data_len);
     }
 
     g_spi_stats.total_reads++;
@@ -143,7 +149,7 @@ static void handle_page_program(const uint8_t *rx, uint32_t rx_len, uint8_t cmd)
     if (!s_ctx.write_enable) return;
 
     rom_slot_t *slot = rom_store_get_active(BUS_SPI);
-    if (!slot || !slot->data || !s_ctx.chip_info) return;
+    if (!slot || (!slot->data && !slot->cstore) || !s_ctx.chip_info) return;
 
     bool use_4byte = (cmd == SPI_CMD_PAGE_PROGRAM_4B) ||
                      s_ctx.four_byte_mode || s_ctx.chip_info->four_byte_addr;
@@ -160,13 +166,20 @@ static void handle_page_program(const uint8_t *rx, uint32_t rx_len, uint8_t cmd)
     uint32_t data_len = rx_len - header_len;
     uint32_t page_start = addr & ~((uint32_t)page_size - 1);
 
-    /* Page program: can only clear bits (AND operation), wraps within page.
-     * Writes beyond allocated PSRAM are silently dropped. */
-    uint32_t alloc = slot->alloc_size;
-    for (uint32_t i = 0; i < data_len; i++) {
-        uint32_t write_addr = page_start | ((addr + i) & (page_size - 1));
-        if (write_addr < alloc) {
-            slot->data[write_addr] &= rx[header_len + i];
+    /* Page program: can only clear bits (AND), wraps within page */
+    if (slot->compressed && slot->cstore) {
+        /* Write through compressed store with page wrap */
+        for (uint32_t i = 0; i < data_len; i++) {
+            uint32_t write_addr = page_start | ((addr + i) & (page_size - 1));
+            cstore_write(slot->cstore, write_addr, &rx[header_len + i], 1, true);
+        }
+    } else if (slot->data) {
+        uint32_t alloc = slot->alloc_size;
+        for (uint32_t i = 0; i < data_len; i++) {
+            uint32_t write_addr = page_start | ((addr + i) & (page_size - 1));
+            if (write_addr < alloc) {
+                slot->data[write_addr] &= rx[header_len + i];
+            }
         }
     }
 
@@ -183,7 +196,7 @@ static void handle_erase(const uint8_t *rx, uint32_t rx_len, uint8_t cmd)
     if (!s_ctx.write_enable) return;
 
     rom_slot_t *slot = rom_store_get_active(BUS_SPI);
-    if (!slot || !slot->data || !s_ctx.chip_info) return;
+    if (!slot || (!slot->data && !slot->cstore) || !s_ctx.chip_info) return;
 
     uint32_t chip_size = s_ctx.chip_info->total_size;
     uint32_t erase_addr = 0;
@@ -221,13 +234,17 @@ static void handle_erase(const uint8_t *rx, uint32_t rx_len, uint8_t cmd)
     }
 
     if (erase_size > 0) {
-        /* Erase = set all bytes to 0xFF (only within allocated region) */
-        uint32_t alloc = slot->alloc_size;
-        uint32_t start = erase_addr;
-        uint32_t end = erase_addr + erase_size;
-        if (start < alloc) {
-            if (end > alloc) end = alloc;
-            memset(&slot->data[start], 0xFF, end - start);
+        /* Erase = set all bytes to 0xFF */
+        if (slot->compressed && slot->cstore) {
+            cstore_erase(slot->cstore, erase_addr, erase_size);
+        } else if (slot->data) {
+            uint32_t alloc = slot->alloc_size;
+            uint32_t start = erase_addr;
+            uint32_t end = erase_addr + erase_size;
+            if (start < alloc) {
+                if (end > alloc) end = alloc;
+                memset(&slot->data[start], 0xFF, end - start);
+            }
         }
 
         s_ctx.write_enable = false;

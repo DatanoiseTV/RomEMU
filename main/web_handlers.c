@@ -8,6 +8,7 @@
 #include "spi_flash_commands.h"
 #include "romemu_common.h"
 #include "gpio_control.h"
+#include "compressed_store.h"
 #include "embedded_files.h"
 
 #include "esp_log.h"
@@ -110,7 +111,8 @@ static void slot_to_json(cJSON *arr, int idx)
     cJSON_AddBoolToObject(obj, "inserted", s->inserted);
     cJSON_AddNumberToObject(obj, "image_size", s->image_size);
     cJSON_AddNumberToObject(obj, "alloc_size", s->alloc_size);
-    cJSON_AddBoolToObject(obj, "has_data", s->data != NULL);
+    cJSON_AddBoolToObject(obj, "has_data", s->data != NULL || s->cstore != NULL);
+    cJSON_AddBoolToObject(obj, "compressed", s->compressed);
 
     char crc_str[16];
     snprintf(crc_str, sizeof(crc_str), "%08X", s->checksum);
@@ -291,7 +293,7 @@ esp_err_t handler_api_slot_download(httpd_req_t *req)
     }
 
     rom_slot_t *s = rom_store_get_slot(slot);
-    if (!s || !s->occupied || !s->data) {
+    if (!s || !s->occupied || (!s->data && !s->cstore)) {
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Slot empty");
         return ESP_FAIL;
     }
@@ -302,13 +304,20 @@ esp_err_t handler_api_slot_download(httpd_req_t *req)
              "attachment; filename=\"slot%d.bin\"", slot);
     httpd_resp_set_hdr(req, "Content-Disposition", disposition);
 
-    /* Send in chunks */
+    /* Send in chunks - decompress on the fly if compressed */
     uint32_t sent = 0;
     uint32_t size = s->image_size;
+    uint8_t chunk_buf[4096];
     while (sent < size) {
         uint32_t chunk = (size - sent > 4096) ? 4096 : (size - sent);
-        esp_err_t err = httpd_resp_send_chunk(req, (const char *)s->data + sent, chunk);
-        if (err != ESP_OK) return err;
+        if (s->compressed && s->cstore) {
+            cstore_read(s->cstore, sent, chunk_buf, chunk);
+            esp_err_t err = httpd_resp_send_chunk(req, (const char *)chunk_buf, chunk);
+            if (err != ESP_OK) return err;
+        } else if (s->data) {
+            esp_err_t err = httpd_resp_send_chunk(req, (const char *)s->data + sent, chunk);
+            if (err != ESP_OK) return err;
+        }
         sent += chunk;
     }
     return httpd_resp_send_chunk(req, NULL, 0); /* End chunked response */
@@ -325,7 +334,7 @@ esp_err_t handler_api_slot_insert(httpd_req_t *req)
     }
 
     rom_slot_t *s = rom_store_get_slot(slot);
-    if (!s || !s->occupied || !s->data) {
+    if (!s || !s->occupied || (!s->data && !s->cstore)) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Slot empty or no data");
         return ESP_FAIL;
     }

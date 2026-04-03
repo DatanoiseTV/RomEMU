@@ -343,8 +343,9 @@ function renderSlots(slots) {
             html += '<span>' + (s.label || 'unnamed') + '</span>';
             html += '<span>' + s.chip_name + ' (' + s.bus + ')</span>';
             html += '<span>' + formatBytes(s.image_size);
-            if (s.alloc_size && s.chip_size && s.alloc_size < s.chip_size) {
-                html += ' / ' + formatBytes(s.alloc_size) + ' alloc';
+            if (s.compressed && s.alloc_size) {
+                var ratio = s.image_size / s.alloc_size;
+                html += ' &rarr; ' + formatBytes(s.alloc_size) + ' (' + ratio.toFixed(1) + ':1)';
             }
             html += '</span>';
             html += '<span>CRC: ' + s.checksum + '</span>';

@@ -75,6 +75,9 @@ typedef struct {
     const char *name;
 } i2c_chip_info_t;
 
+/* Forward declaration */
+typedef struct cstore_t cstore_t;
+
 /* ---- ROM slot ---- */
 typedef struct {
     bool        occupied;
@@ -82,9 +85,11 @@ typedef struct {
     chip_type_t chip_type;
     bus_type_t  bus_type;
     uint32_t    image_size;          /* actual uploaded data size */
-    uint32_t    alloc_size;         /* PSRAM allocation size (may be < chip size) */
+    uint32_t    alloc_size;         /* PSRAM allocation size (compressed) */
     uint32_t    checksum;           /* CRC32 */
-    uint8_t    *data;               /* PSRAM pointer */
+    uint8_t    *data;               /* PSRAM pointer (raw, for small images) */
+    cstore_t   *cstore;             /* Compressed store (for large images) */
+    bool        compressed;         /* true = using cstore, false = raw data ptr */
     bool        inserted;           /* actively being served to host */
 } rom_slot_t;
 

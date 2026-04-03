@@ -1,5 +1,6 @@
 #include "rom_store.h"
 #include "spi_flash_commands.h"
+#include "compressed_store.h"
 
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -109,10 +110,15 @@ esp_err_t rom_store_upload(int slot_idx, const uint8_t *data, uint32_t size,
     }
 
     /* Free existing data */
+    if (s->cstore) {
+        cstore_destroy(s->cstore);
+        s->cstore = NULL;
+    }
     if (s->data) {
         heap_caps_free(s->data);
         s->data = NULL;
     }
+    s->compressed = false;
 
     /* Determine chip capacity from database */
     uint32_t chip_size = size;
@@ -126,47 +132,25 @@ esp_err_t rom_store_upload(int slot_idx, const uint8_t *data, uint32_t size,
     }
 
     /*
-     * Dynamic PSRAM allocation:
-     * - Try to allocate the full chip size first
-     * - If chip is larger than available PSRAM, allocate as much as we can
-     *   (at least the uploaded image size). Reads beyond allocated region
-     *   return 0xFF (erased state), which is correct behavior.
+     * Use LZ4 block compression for all images.
+     * Compresses at upload time, decompresses on-the-fly during reads.
+     * Erased regions (0xFF) compress to nearly zero.
+     * Typical firmware: 3:1 to 5:1 compression ratio.
      */
-    uint32_t want_size = chip_size > size ? chip_size : size;
-    uint32_t alloc_size = want_size;
-    s->data = heap_caps_malloc(alloc_size, MALLOC_CAP_SPIRAM);
-
-    if (!s->data && alloc_size > size) {
-        /* Full chip doesn't fit — try allocating just enough for the image
-         * plus some margin for writes, rounded up to 64K */
-        alloc_size = (size + 0xFFFF) & ~0xFFFF;
-        if (alloc_size < size) alloc_size = size;
-        s->data = heap_caps_malloc(alloc_size, MALLOC_CAP_SPIRAM);
-    }
-
-    if (!s->data) {
-        ESP_LOGE(TAG, "Failed to allocate %u bytes in PSRAM for slot %d "
-                 "(free: %u)", alloc_size, slot_idx,
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    cstore_t *cs = cstore_create(data, size, chip_size);
+    if (!cs) {
+        ESP_LOGE(TAG, "Compressed store creation failed for slot %d", slot_idx);
         return ESP_ERR_NO_MEM;
     }
 
-    if (alloc_size < chip_size) {
-        ESP_LOGW(TAG, "Slot %d: allocated %u of %u bytes (%.0f%%). "
-                 "Reads beyond %u will return 0xFF.",
-                 slot_idx, alloc_size, chip_size,
-                 100.0f * alloc_size / chip_size, alloc_size);
-    }
-
-    /* Fill with 0xFF (erased state), then copy image */
-    memset(s->data, 0xFF, alloc_size);
-    memcpy(s->data, data, size);
-
+    s->cstore = cs;
+    s->data = NULL;
+    s->compressed = true;
     s->occupied = true;
     s->chip_type = chip_type;
     s->bus_type = bus;
     s->image_size = size;
-    s->alloc_size = alloc_size;
+    s->alloc_size = cstore_get_psram_usage(cs);
     s->checksum = rom_store_crc32(data, size);
     s->inserted = false;
     if (label && label[0]) {
@@ -191,6 +175,10 @@ esp_err_t rom_store_delete(int slot_idx)
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (s->cstore) {
+        cstore_destroy(s->cstore);
+        s->cstore = NULL;
+    }
     if (s->data) {
         heap_caps_free(s->data);
         s->data = NULL;
@@ -207,7 +195,7 @@ esp_err_t rom_store_insert(int slot_idx)
     if (slot_idx < 0 || slot_idx >= ROM_SLOT_MAX) return ESP_ERR_INVALID_ARG;
 
     rom_slot_t *s = &s_slots[slot_idx];
-    if (!s->occupied || !s->data) {
+    if (!s->occupied || (!s->data && !s->cstore)) {
         ESP_LOGE(TAG, "Slot %d is empty, cannot insert", slot_idx);
         return ESP_ERR_INVALID_STATE;
     }
@@ -260,7 +248,7 @@ rom_slot_t *rom_store_get_active(bus_type_t bus)
     int idx = (bus == BUS_SPI) ? s_active_spi_slot : s_active_i2c_slot;
     if (idx < 0) return NULL;
     rom_slot_t *s = &s_slots[idx];
-    return (s->inserted && s->data) ? s : NULL;
+    return (s->inserted && (s->data || s->cstore)) ? s : NULL;
 }
 
 int rom_store_get_active_idx(bus_type_t bus)
