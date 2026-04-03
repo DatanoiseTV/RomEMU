@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include <sys/socket.h>
+#include "miniz.h"
 
 static const char *TAG = "web_hdlr";
 
@@ -300,10 +301,11 @@ esp_err_t handler_api_slot_upload(httpd_req_t *req)
 
     ESP_LOGI(TAG, "Upload received: %d bytes", received);
 
-    /* Parse chip_type from query string or use default */
-    char query[64] = {};
+    /* Parse chip_type and label from query string */
+    char query[128] = {};
     char chip_str[16] = {};
     char label[32] = {};
+    char orig_size_str[16] = {};
     chip_type_t chip_type = CHIP_W25Q128; /* default */
 
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
@@ -311,11 +313,75 @@ esp_err_t handler_api_slot_upload(httpd_req_t *req)
             chip_type = (chip_type_t)atoi(chip_str);
         }
         httpd_query_key_value(query, "label", label, sizeof(label));
+        httpd_query_key_value(query, "original_size", orig_size_str, sizeof(orig_size_str));
     }
 
-    esp_err_t err = rom_store_upload(slot, buf, received, chip_type,
+    /* Check if data is compressed (client-side DEFLATE) */
+    char compressed_hdr[16] = {};
+    httpd_req_get_hdr_value_str(req, "X-Compressed", compressed_hdr, sizeof(compressed_hdr));
+
+    uint8_t *final_buf = buf;
+    int final_size = received;
+
+    if (strcmp(compressed_hdr, "deflate") == 0) {
+        /* Decompress raw DEFLATE data using miniz (in ESP32 ROM) */
+        uint32_t original_size = 0;
+        char orig_hdr[16] = {};
+        httpd_req_get_hdr_value_str(req, "X-Original-Size", orig_hdr, sizeof(orig_hdr));
+        if (orig_hdr[0]) {
+            original_size = (uint32_t)atol(orig_hdr);
+        } else if (orig_size_str[0]) {
+            original_size = (uint32_t)atol(orig_size_str);
+        }
+
+        if (original_size == 0 || original_size > 64 * 1024 * 1024) {
+            ESP_LOGE(TAG, "Invalid original size: %" PRIu32, original_size);
+            heap_caps_free(buf);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing X-Original-Size header");
+            return ESP_FAIL;
+        }
+
+        ESP_LOGI(TAG, "Decompressing: %d bytes -> %" PRIu32 " bytes", received, original_size);
+
+        uint8_t *decompressed = heap_caps_malloc(original_size, MALLOC_CAP_SPIRAM);
+        if (!decompressed) {
+            ESP_LOGE(TAG, "Failed to allocate %" PRIu32 " bytes for decompression", original_size);
+            heap_caps_free(buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+            return ESP_FAIL;
+        }
+
+        /* Use miniz tinfl for raw DEFLATE decompression */
+        size_t decomp_size = tinfl_decompress_mem_to_mem(
+            decompressed, original_size, buf, received,
+            TINFL_FLAG_PARSE_ZLIB_HEADER  /* 0 for raw deflate */
+        );
+
+        /* If raw deflate failed, try without flags (pure raw) */
+        if (decomp_size == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED) {
+            decomp_size = tinfl_decompress_mem_to_mem(
+                decompressed, original_size, buf, received, 0);
+        }
+
+        if (decomp_size == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED) {
+            ESP_LOGE(TAG, "Decompression failed");
+            heap_caps_free(decompressed);
+            heap_caps_free(buf);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Decompression failed");
+            return ESP_FAIL;
+        }
+
+        ESP_LOGI(TAG, "Decompressed: %u bytes (%.1f:1 ratio)",
+                 (unsigned)decomp_size, (float)decomp_size / received);
+
+        heap_caps_free(buf);
+        final_buf = decompressed;
+        final_size = (int)decomp_size;
+    }
+
+    esp_err_t err = rom_store_upload(slot, final_buf, final_size, chip_type,
                                       label[0] ? label : NULL);
-    heap_caps_free(buf);
+    heap_caps_free(final_buf);
 
     if (err != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload failed");

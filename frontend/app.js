@@ -168,21 +168,35 @@ function handleUpload(e) {
     const chip = chipSelect.value;
     const label = labelInput.value || file.name;
 
-    /* Eject first if something is inserted, then upload */
+    progressBar.style.display = 'block';
+    uploadBtn.disabled = true;
+    resultDiv.innerHTML = '<span style="color:var(--text-secondary)">Compressing...</span>';
+    progressFill.style.width = '0%';
+    progressText.textContent = 'Compressing...';
+
+    /* Eject first, then compress client-side, then upload */
     fetch('/api/slots/0/eject', { method: 'POST' }).then(function() {
-        const url = '/api/slots/0/upload?chip=' + chip + '&label=' + encodeURIComponent(label);
+        return compressFile(file);
+    }).then(function(compressed) {
+        const ratio = (file.size / compressed.byteLength).toFixed(1);
+        resultDiv.innerHTML = '<span style="color:var(--text-secondary)">Compressed: ' +
+            formatBytes(file.size) + ' &rarr; ' + formatBytes(compressed.byteLength) +
+            ' (' + ratio + ':1). Uploading...</span>';
+
+        const url = '/api/slots/0/upload?chip=' + chip +
+            '&label=' + encodeURIComponent(label) +
+            '&original_size=' + file.size;
         const xhr = new XMLHttpRequest();
         xhr.open('POST', url, true);
         xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-        progressBar.style.display = 'block';
-        uploadBtn.disabled = true;
-        resultDiv.innerHTML = '';
+        xhr.setRequestHeader('X-Compressed', 'deflate');
+        xhr.setRequestHeader('X-Original-Size', file.size.toString());
 
         xhr.upload.addEventListener('progress', function(e) {
             if (e.lengthComputable) {
                 const pct = Math.round((e.loaded / e.total) * 100);
                 progressFill.style.width = pct + '%';
-                progressText.textContent = pct + '%  (' + formatBytes(e.loaded) + ' / ' + formatBytes(e.total) + ')';
+                progressText.textContent = pct + '% (' + formatBytes(e.loaded) + ' / ' + formatBytes(compressed.byteLength) + ')';
             }
         });
 
@@ -192,9 +206,8 @@ function handleUpload(e) {
                 progressFill.style.width = '100%';
                 progressText.textContent = '100%';
                 resultDiv.innerHTML = '<span style="color:var(--green)">Upload OK! Inserting...</span>';
-                /* Auto-insert after upload */
                 fetch('/api/slots/0/insert', { method: 'POST' }).then(function() {
-                    resultDiv.innerHTML = '<span style="color:var(--green)">Uploaded &amp; inserted! Emulation active.</span>';
+                    resultDiv.innerHTML = '<span style="color:var(--green)">Uploaded &amp; inserted! (' + ratio + ':1 compression)</span>';
                     htmx.trigger('#image-status', 'load');
                     htmx.trigger('#sys-status', 'load');
                 });
@@ -203,7 +216,10 @@ function handleUpload(e) {
             }
         };
         xhr.onerror = function() { uploadBtn.disabled = false; resultDiv.innerHTML = '<span style="color:var(--red)">Upload error</span>'; };
-        xhr.send(file);
+        xhr.send(compressed);
+    }).catch(function(err) {
+        uploadBtn.disabled = false;
+        resultDiv.innerHTML = '<span style="color:var(--red)">Compression failed: ' + err.message + '</span>';
     });
 }
 
@@ -380,4 +396,44 @@ function formatUptime(s) {
     if (h > 0) return h + 'h ' + m + 'm';
     if (m > 0) return m + 'm ' + (s%60) + 's';
     return s + 's';
+}
+
+/* ---- Client-side compression (raw DEFLATE via CompressionStream) ---- */
+
+async function compressFile(file) {
+    if (typeof CompressionStream === 'undefined') {
+        return await file.arrayBuffer();
+    }
+    try {
+        const cs = new CompressionStream('deflate-raw');
+        const writer = cs.writable.getWriter();
+        const reader = cs.readable.getReader();
+
+        /* Feed file data into compressor */
+        const raw = await file.arrayBuffer();
+        writer.write(new Uint8Array(raw));
+        writer.close();
+
+        /* Read compressed output */
+        const chunks = [];
+        let totalLen = 0;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            totalLen += value.byteLength;
+        }
+
+        /* Concatenate chunks */
+        const result = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const chunk of chunks) {
+            result.set(chunk, offset);
+            offset += chunk.byteLength;
+        }
+        return result.buffer;
+    } catch (err) {
+        console.warn('Compression failed, sending raw:', err);
+        return await file.arrayBuffer();
+    }
 }
