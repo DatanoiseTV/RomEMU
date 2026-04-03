@@ -191,6 +191,15 @@ static const char *parse_action_from_uri(const char *uri)
     return NULL;
 }
 
+/* Compare action string ignoring query params (e.g. "upload?chip=4" matches "upload") */
+static bool action_matches(const char *action, const char *name)
+{
+    if (!action) return false;
+    size_t len = strlen(name);
+    return (strncmp(action, name, len) == 0 &&
+            (action[len] == '\0' || action[len] == '?'));
+}
+
 esp_err_t handler_api_slot_action(httpd_req_t *req)
 {
     int slot = parse_slot_from_uri(req->uri);
@@ -205,13 +214,13 @@ esp_err_t handler_api_slot_action(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    if (strcmp(action, "upload") == 0) {
+    if (action_matches(action, "upload")) {
         return handler_api_slot_upload(req);
-    } else if (strcmp(action, "insert") == 0) {
+    } else if (action_matches(action, "insert")) {
         return handler_api_slot_insert(req);
-    } else if (strcmp(action, "eject") == 0) {
+    } else if (action_matches(action, "eject")) {
         return handler_api_slot_eject(req);
-    } else if (strcmp(action, "label") == 0) {
+    } else if (action_matches(action, "label")) {
         return handler_api_slot_label(req);
     }
 
@@ -298,7 +307,7 @@ esp_err_t handler_api_slot_download(httpd_req_t *req)
 {
     /* Check if this is /api/slots/N/download */
     const char *action = parse_action_from_uri(req->uri);
-    if (!action || strcmp(action, "download") != 0) {
+    if (!action_matches(action, "download")) {
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
         return ESP_FAIL;
     }
