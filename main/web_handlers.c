@@ -883,3 +883,91 @@ esp_err_t handler_api_pinout(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }
+
+/* ---- I2C Loopback Self-Test ----
+ * Uses I2C_NUM_1 as master on spare GPIOs to probe our own slave on I2C_NUM_0.
+ * Jumper test_sda→I2C_SDA and test_scl→I2C_SCL, then POST /api/i2c/test.
+ * Also does a full bus scan (0x03..0x77) to show all responding addresses.
+ */
+#include "driver/i2c_master.h"
+
+esp_err_t handler_api_i2c_test(httpd_req_t *req)
+{
+#if CONFIG_IDF_TARGET_ESP32P4
+    const int test_sda = 20;
+    const int test_scl = 21;
+#else
+    const int test_sda = 17;
+    const int test_scl = 18;
+#endif
+
+    ESP_LOGI(TAG, "I2C self-test: master on GPIO %d/%d, scanning bus...", test_sda, test_scl);
+
+    i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = I2C_NUM_1,
+        .sda_io_num = test_sda,
+        .scl_io_num = test_scl,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    i2c_master_bus_handle_t bus = NULL;
+    esp_err_t err = i2c_new_master_bus(&bus_cfg, &bus);
+    if (err != ESP_OK) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+            "{\"ok\":false,\"error\":\"Failed to init I2C master: %s\"}", esp_err_to_name(err));
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, msg, strlen(msg));
+    }
+
+    char result[512];
+    int pos = 0;
+    int found_count = 0;
+    pos += snprintf(result + pos, sizeof(result) - pos,
+        "{\"ok\":true,\"test_sda\":%d,\"test_scl\":%d,\"slave_sda\":%d,\"slave_scl\":%d,\"found\":[",
+        test_sda, test_scl, PIN_I2C_SDA, PIN_I2C_SCL);
+
+    for (uint8_t addr = 0x03; addr <= 0x77; addr++) {
+        err = i2c_master_probe(bus, addr, 50);
+        if (err == ESP_OK) {
+            if (found_count > 0) pos += snprintf(result + pos, sizeof(result) - pos, ",");
+            pos += snprintf(result + pos, sizeof(result) - pos, "\"0x%02X\"", addr);
+            ESP_LOGI(TAG, "I2C scan: found device at 0x%02X", addr);
+            found_count++;
+        }
+    }
+    pos += snprintf(result + pos, sizeof(result) - pos, "],\"count\":%d", found_count);
+
+    /* Try reading from 0x50 */
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x50,
+        .scl_speed_hz = 100000,
+    };
+    i2c_master_dev_handle_t dev = NULL;
+    err = i2c_master_bus_add_device(bus, &dev_cfg, &dev);
+    if (err == ESP_OK) {
+        uint8_t addr_byte[2] = {0x00, 0x00};
+        uint8_t read_buf[4] = {0};
+        err = i2c_master_transmit_receive(dev, addr_byte, 2, read_buf, 4, 100);
+        if (err == ESP_OK) {
+            pos += snprintf(result + pos, sizeof(result) - pos,
+                ",\"read_0x50\":[%u,%u,%u,%u]", read_buf[0], read_buf[1], read_buf[2], read_buf[3]);
+            ESP_LOGI(TAG, "I2C read 0x50 @0x0000: %02X %02X %02X %02X",
+                     read_buf[0], read_buf[1], read_buf[2], read_buf[3]);
+        } else {
+            pos += snprintf(result + pos, sizeof(result) - pos,
+                ",\"read_0x50_error\":\"%s\"", esp_err_to_name(err));
+            ESP_LOGW(TAG, "I2C read 0x50 failed: %s", esp_err_to_name(err));
+        }
+        i2c_master_bus_rm_device(dev);
+    }
+
+    pos += snprintf(result + pos, sizeof(result) - pos, "}");
+    i2c_del_master_bus(bus);
+
+    ESP_LOGI(TAG, "I2C self-test done: %d devices found", found_count);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, result, pos);
+}

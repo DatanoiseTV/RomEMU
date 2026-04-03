@@ -45,6 +45,7 @@ extern esp_err_t handler_api_events(httpd_req_t *req);
 extern esp_err_t handler_api_gpio_get(httpd_req_t *req);
 extern esp_err_t handler_api_gpio_action(httpd_req_t *req);
 extern esp_err_t handler_api_pinout(httpd_req_t *req);
+extern esp_err_t handler_api_i2c_test(httpd_req_t *req);
 
 /* Slot handler that extracts the slot number from the URI */
 extern esp_err_t handler_api_slot_action(httpd_req_t *req);
@@ -67,6 +68,7 @@ static const httpd_uri_t uri_handlers[] = {
     { .uri = "/api/log",        .method = HTTP_GET,    .handler = handler_api_log },
     { .uri = "/api/events",     .method = HTTP_GET,    .handler = handler_api_events },
     { .uri = "/api/pinout",     .method = HTTP_GET,    .handler = handler_api_pinout },
+    { .uri = "/api/i2c/test",  .method = HTTP_POST,   .handler = handler_api_i2c_test },
     { .uri = "/api/gpio",       .method = HTTP_GET,    .handler = handler_api_gpio_get },
     { .uri = "/api/gpio/*",     .method = HTTP_POST,   .handler = handler_api_gpio_action },
     /* Slot-specific endpoints use wildcard matching */
