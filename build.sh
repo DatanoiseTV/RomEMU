@@ -83,6 +83,8 @@ SOURCES=(
     main/web_handlers.c
     main/sse_manager.c
     main/sse_manager.h
+    main/gpio_control.c
+    main/gpio_control.h
     main/romemu_common.h
     main/pin_config.h
     main/embedded_files.h

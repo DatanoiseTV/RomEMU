@@ -17,6 +17,7 @@
 #include "i2c_eeprom_emu.h"
 #include "web_server.h"
 #include "sse_manager.h"
+#include "gpio_control.h"
 
 static const char *TAG = "romemu";
 
@@ -60,7 +61,10 @@ void app_main(void)
     /* 7. Start HTTP server */
     ESP_ERROR_CHECK(web_server_start());
 
-    /* 8. Initialize emulators (hardware peripherals) */
+    /* 8. Initialize GPIO control (reset + power) */
+    ESP_ERROR_CHECK(gpio_control_init());
+
+    /* 9. Initialize emulators (hardware peripherals) */
     ESP_ERROR_CHECK(spi_flash_emu_init());
     ESP_ERROR_CHECK(i2c_eeprom_emu_init());
 
@@ -77,6 +81,7 @@ void app_main(void)
     ESP_LOGI(TAG, "Ready. Upload a ROM image via the web UI.");
     ESP_LOGI(TAG, "SPI pins: CS=10 CLK=12 MOSI=11 MISO=13 WP=14 HD=9");
     ESP_LOGI(TAG, "I2C pins: SDA=1 SCL=2");
+    ESP_LOGI(TAG, "GPIO:     RESET=4 POWER=5");
 
     /* Main loop - watchdog + periodic status */
     uint32_t last_status_print = 0;

@@ -98,6 +98,57 @@ static const spi_chip_info_t spi_chip_db[] = {
         .sector_size = 4096, .block_size = 65536,
         .four_byte_addr = false, .name = "MX25L3233F"
     },
+    {
+        .type = CHIP_MX25L6433F,
+        .jedec_manufacturer = 0xC2, .jedec_memory_type = 0x20, .jedec_capacity = 0x17,
+        .total_size = 8 * 1024 * 1024, .page_size = 256,
+        .sector_size = 4096, .block_size = 65536,
+        .four_byte_addr = false, .name = "MX25L6433F"
+    },
+    {
+        .type = CHIP_MX25L12835F,
+        .jedec_manufacturer = 0xC2, .jedec_memory_type = 0x20, .jedec_capacity = 0x18,
+        .total_size = 16 * 1024 * 1024, .page_size = 256,
+        .sector_size = 4096, .block_size = 65536,
+        .four_byte_addr = false, .name = "MX25L12835F"
+    },
+    {
+        .type = CHIP_MX25L25645G,
+        .jedec_manufacturer = 0xC2, .jedec_memory_type = 0x20, .jedec_capacity = 0x19,
+        .total_size = 32 * 1024 * 1024, .page_size = 256,
+        .sector_size = 4096, .block_size = 65536,
+        .four_byte_addr = true, .name = "MX25L25645G"
+    },
+    /* ISSI */
+    {
+        .type = CHIP_IS25LP064,
+        .jedec_manufacturer = 0x9D, .jedec_memory_type = 0x60, .jedec_capacity = 0x17,
+        .total_size = 8 * 1024 * 1024, .page_size = 256,
+        .sector_size = 4096, .block_size = 65536,
+        .four_byte_addr = false, .name = "IS25LP064"
+    },
+    {
+        .type = CHIP_IS25LP128,
+        .jedec_manufacturer = 0x9D, .jedec_memory_type = 0x60, .jedec_capacity = 0x18,
+        .total_size = 16 * 1024 * 1024, .page_size = 256,
+        .sector_size = 4096, .block_size = 65536,
+        .four_byte_addr = false, .name = "IS25LP128"
+    },
+    /* Microchip SST */
+    {
+        .type = CHIP_SST26VF032B,
+        .jedec_manufacturer = 0xBF, .jedec_memory_type = 0x26, .jedec_capacity = 0x42,
+        .total_size = 4 * 1024 * 1024, .page_size = 256,
+        .sector_size = 4096, .block_size = 65536,
+        .four_byte_addr = false, .name = "SST26VF032B"
+    },
+    {
+        .type = CHIP_SST26VF064B,
+        .jedec_manufacturer = 0xBF, .jedec_memory_type = 0x26, .jedec_capacity = 0x43,
+        .total_size = 8 * 1024 * 1024, .page_size = 256,
+        .sector_size = 4096, .block_size = 65536,
+        .four_byte_addr = false, .name = "SST26VF064B"
+    },
 };
 
 #define SPI_CHIP_DB_COUNT (sizeof(spi_chip_db) / sizeof(spi_chip_db[0]))
@@ -111,7 +162,8 @@ static const i2c_chip_info_t i2c_chip_db[] = {
     { .type = CHIP_24C64,  .i2c_base_addr = 0x50, .total_size = 8192,   .page_size = 32,  .addr_bytes = 2, .addr_bits_in_dev = 0, .name = "24C64" },
     { .type = CHIP_24C128, .i2c_base_addr = 0x50, .total_size = 16384,  .page_size = 64,  .addr_bytes = 2, .addr_bits_in_dev = 0, .name = "24C128" },
     { .type = CHIP_24C256, .i2c_base_addr = 0x50, .total_size = 32768,  .page_size = 64,  .addr_bytes = 2, .addr_bits_in_dev = 0, .name = "24C256" },
-    { .type = CHIP_24C512, .i2c_base_addr = 0x50, .total_size = 65536,  .page_size = 128, .addr_bytes = 2, .addr_bits_in_dev = 0, .name = "24C512" },
+    { .type = CHIP_24C512,  .i2c_base_addr = 0x50, .total_size = 65536,  .page_size = 128, .addr_bytes = 2, .addr_bits_in_dev = 0, .name = "24C512" },
+    { .type = CHIP_24C1024, .i2c_base_addr = 0x50, .total_size = 131072, .page_size = 256, .addr_bytes = 2, .addr_bits_in_dev = 1, .name = "24C1024" },
 };
 
 #define I2C_CHIP_DB_COUNT (sizeof(i2c_chip_db) / sizeof(i2c_chip_db[0]))
@@ -132,7 +184,7 @@ static inline const i2c_chip_info_t *i2c_chip_find(chip_type_t type) {
 }
 
 static inline bus_type_t chip_get_bus(chip_type_t type) {
-    if (type >= CHIP_W25Q16 && type <= CHIP_MX25L3233F) return BUS_SPI;
-    if (type >= CHIP_24C02 && type <= CHIP_24C512) return BUS_I2C;
+    if (type >= CHIP_W25Q16 && type <= CHIP_SST26VF064B) return BUS_SPI;
+    if (type >= CHIP_24C02 && type <= CHIP_24C1024) return BUS_I2C;
     return BUS_NONE;
 }

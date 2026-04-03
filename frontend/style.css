@@ -403,6 +403,30 @@ input[type="file"]::file-selector-button:hover {
     margin-bottom: 8px;
 }
 
+/* GPIO control */
+.gpio-buttons {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+.gpio-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.gpio-label {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    font-weight: 600;
+    margin-right: 4px;
+}
+.gpio-status-row {
+    display: flex;
+    gap: 8px;
+}
+
 /* API Docs */
 .api-docs h3 {
     font-size: 0.9rem;

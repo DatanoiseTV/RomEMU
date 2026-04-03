@@ -15,6 +15,7 @@ Built for fast iteration during firmware development, BIOS porting, coreboot bri
 - **4 ROM slots** in PSRAM — upload multiple images, switch between them instantly
 - **Real-time web UI** — dark-themed HTMX dashboard with live access log (SSE), statistics, and ROM management
 - **REST API** — fully scriptable: upload, insert, eject, monitor via `curl` or any HTTP client
+- **Target control GPIOs** — reset pulse/hold (open-drain) and power on/off/cycle (MOSFET gate) via web UI or API
 - **WiFi** — STA mode with stored credentials, automatic AP fallback (`ROMEMU-XXXX`), mDNS at `romemu.local`
 
 ## Supported Chips
@@ -29,7 +30,15 @@ Built for fast iteration during firmware development, BIOS porting, coreboot bri
 | W25Q512JV | 64 MB | `EF 40 20` | 24C64 | 8 KB |
 | MX25L1606E | 2 MB | `C2 20 15` | 24C128 | 16 KB |
 | MX25L3233F | 4 MB | `C2 20 16` | 24C256 | 32 KB |
-| | | | 24C512 | 64 KB |
+| MX25L6433F | 8 MB | `C2 20 17` | 24C512 | 64 KB |
+| MX25L12835F | 16 MB | `C2 20 18` | 24C1024 | 128 KB |
+| MX25L25645G | 32 MB | `C2 20 19` | | |
+| IS25LP064 | 8 MB | `9D 60 17` | | |
+| IS25LP128 | 16 MB | `9D 60 18` | | |
+| SST26VF032B | 4 MB | `BF 26 42` | | |
+| SST26VF064B | 8 MB | `BF 26 43` | | |
+
+Chips larger than available PSRAM are supported — the emulator allocates as much as it can and returns `0xFF` (erased state) for addresses beyond the allocated region. This works well for firmware development since images are typically much smaller than the full chip capacity.
 
 ## Hardware
 
@@ -48,10 +57,12 @@ Connect these pins to the target system's ROM socket:
 | WP / IO2 | 14 | WP# | QSPI IO2 |
 | HD / IO3 | 9 | HOLD# | QSPI IO3 |
 
-| Function | GPIO |
-|----------|------|
-| I2C SDA | 1 |
-| I2C SCL | 2 |
+| Function | GPIO | Notes |
+|----------|------|-------|
+| I2C SDA | 1 | |
+| I2C SCL | 2 | |
+| Reset Out | 4 | Open-drain, active-low — connect to target RESET# |
+| Power Out | 5 | Push-pull, active-high — drives N-MOSFET gate for target power |
 
 GPIOs 9–14 are the IOMUX pins for SPI2 (FSPI) on the ESP32-S3, giving minimum signal propagation delay for reliable operation up to ~20–25 MHz in single SPI mode.
 
@@ -111,6 +122,12 @@ curl -N http://romemu.local/api/events
 # Eject
 curl -X POST http://romemu.local/api/slots/0/eject
 
+# Reset the target (100ms pulse)
+curl -X POST http://romemu.local/api/gpio/reset/pulse -d '{"duration":100}'
+
+# Power cycle the target
+curl -X POST http://romemu.local/api/gpio/power/cycle -d '{"duration":500,"settle":200}'
+
 # Download image back
 curl -o dump.bin http://romemu.local/api/slots/0/download
 ```
@@ -152,6 +169,13 @@ Full API reference is available in the web UI under the **API Reference** sectio
 | `POST` | `/api/stats/reset` | Reset statistics |
 | `GET` | `/api/wifi` | WiFi info |
 | `POST` | `/api/wifi` | Set WiFi (`{"ssid":"...","password":"..."}`) |
+| `GET` | `/api/gpio` | Reset & power pin state |
+| `POST` | `/api/gpio/reset/pulse` | Pulse reset (`{"duration": 100}`) |
+| `POST` | `/api/gpio/reset/assert` | Hold target in reset |
+| `POST` | `/api/gpio/reset/release` | Release from reset |
+| `POST` | `/api/gpio/power/on` | Power on target |
+| `POST` | `/api/gpio/power/off` | Power off target |
+| `POST` | `/api/gpio/power/cycle` | Power cycle (`{"duration": 500, "settle": 200}`) |
 | `GET` | `/api/events` | SSE stream (access log + stats) |
 | `GET` | `/api/log` | Last 100 log entries |
 
@@ -173,7 +197,7 @@ Full API reference is available in the web UI under the **API Reference** sectio
 │         │                │                        │
 │  ┌──────┴────────────────┴───────┐               │
 │  │     ROM Store (PSRAM)         │  4 slots      │
-│  │     4 x 4 MB = 16 MB max     │               │
+│  │     dynamic allocation        │               │
 │  └───────────────┬───────────────┘               │
 │                  │                                │
 │  ┌───────────────┴───────────────┐               │
@@ -197,7 +221,7 @@ Full API reference is available in the web UI under the **API Reference** sectio
 
 - **SPI clock speed**: Reliable up to ~20–25 MHz single SPI, ~10 MHz QSPI. The target must not exceed this.
 - **PSRAM is volatile**: ROM images are lost on power cycle and must be re-uploaded (~2 seconds for 2 MB over WiFi).
-- **4 MB per slot**: Larger chips (W25Q256/512) span multiple slots or are partially filled.
+- **PSRAM capacity**: The ESP32-S3 has 8 MB PSRAM. Images larger than available PSRAM are partially backed — unallocated addresses return `0xFF` (erased state). This is fine for most firmware images which are smaller than the full chip size.
 - **Fast Read recommended**: Plain Read (03h) at high clock speeds may have issues on the first byte since there's no dummy cycle for the ESP32-S3 to prepare data.
 
 ## License

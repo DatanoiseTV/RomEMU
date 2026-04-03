@@ -88,6 +88,34 @@ function formatTimestamp(ms) {
 }
 
 function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+/* ---- GPIO Control ---- */
+
+function gpioAction(action, params) {
+    const opts = { method: 'POST' };
+    if (params) {
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = JSON.stringify(params);
+    }
+    fetch('/api/gpio/' + action, opts)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            updateGpioStatus(data);
+        })
+        .catch(function(err) { alert('GPIO action failed: ' + err.message); });
+}
+
+function updateGpioStatus(data) {
+    const el = document.getElementById('gpio-status');
+    if (!el) return;
+    let html = '<div class="gpio-status-row">';
+    html += '<span class="tag ' + (data.reset_asserted ? 'inserted' : '') + '">';
+    html += 'Reset: ' + (data.reset_asserted ? 'ASSERTED' : 'Released') + '</span>';
+    html += ' <span class="tag ' + (data.power_on ? 'inserted' : 'ap-mode') + '">';
+    html += 'Power: ' + (data.power_on ? 'ON' : 'OFF') + '</span>';
+    html += '</div>';
+    el.innerHTML = html;
+}
 function pad3(n) { return n < 10 ? '00' + n : n < 100 ? '0' + n : '' + n; }
 
 function toggleLogPause() {
@@ -272,6 +300,14 @@ document.addEventListener('htmx:afterSwap', function(e) {
         } catch (err) { /* leave raw */ }
     }
 
+    /* Process /api/gpio response */
+    if (e.detail.target.id === 'gpio-status') {
+        try {
+            const data = JSON.parse(e.detail.target.textContent);
+            updateGpioStatus(data);
+        } catch (err) { /* leave raw */ }
+    }
+
     /* Process /api/wifi response */
     if (e.detail.target.id === 'wifi-info') {
         try {
@@ -306,7 +342,11 @@ function renderSlots(slots) {
             html += '<div class="slot-meta">';
             html += '<span>' + (s.label || 'unnamed') + '</span>';
             html += '<span>' + s.chip_name + ' (' + s.bus + ')</span>';
-            html += '<span>' + formatBytes(s.image_size) + '</span>';
+            html += '<span>' + formatBytes(s.image_size);
+            if (s.alloc_size && s.chip_size && s.alloc_size < s.chip_size) {
+                html += ' / ' + formatBytes(s.alloc_size) + ' alloc';
+            }
+            html += '</span>';
             html += '<span>CRC: ' + s.checksum + '</span>';
             html += '</div>';
         } else {

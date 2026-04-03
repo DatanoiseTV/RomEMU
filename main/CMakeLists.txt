@@ -9,6 +9,7 @@ idf_component_register(
         "web_server.c"
         "web_handlers.c"
         "sse_manager.c"
+        "gpio_control.c"
     INCLUDE_DIRS "."
     REQUIRES
         driver

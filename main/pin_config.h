@@ -14,5 +14,11 @@
 #define PIN_I2C_SDA     GPIO_NUM_1
 #define PIN_I2C_SCL     GPIO_NUM_2
 
+/* Target Reset Control (active-low, directly drives target RESET#) */
+#define PIN_RESET_OUT   GPIO_NUM_4
+
+/* Target Power Control (active-high, drives N-MOSFET gate) */
+#define PIN_POWER_OUT   GPIO_NUM_5
+
 /* Status LED (onboard RGB on most ESP32-S3 DevKitC) */
 #define PIN_LED_STATUS  GPIO_NUM_48

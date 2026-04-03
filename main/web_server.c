@@ -42,6 +42,8 @@ extern esp_err_t handler_api_wifi_get(httpd_req_t *req);
 extern esp_err_t handler_api_wifi_set(httpd_req_t *req);
 extern esp_err_t handler_api_log(httpd_req_t *req);
 extern esp_err_t handler_api_events(httpd_req_t *req);
+extern esp_err_t handler_api_gpio_get(httpd_req_t *req);
+extern esp_err_t handler_api_gpio_action(httpd_req_t *req);
 
 /* Slot handler that extracts the slot number from the URI */
 extern esp_err_t handler_api_slot_action(httpd_req_t *req);
@@ -63,6 +65,8 @@ static const httpd_uri_t uri_handlers[] = {
     { .uri = "/api/wifi",       .method = HTTP_POST,   .handler = handler_api_wifi_set },
     { .uri = "/api/log",        .method = HTTP_GET,    .handler = handler_api_log },
     { .uri = "/api/events",     .method = HTTP_GET,    .handler = handler_api_events },
+    { .uri = "/api/gpio",       .method = HTTP_GET,    .handler = handler_api_gpio_get },
+    { .uri = "/api/gpio/*",     .method = HTTP_POST,   .handler = handler_api_gpio_action },
     /* Slot-specific endpoints use wildcard matching */
     { .uri = "/api/slots/*",    .method = HTTP_POST,   .handler = handler_api_slot_action },
     { .uri = "/api/slots/*",    .method = HTTP_GET,    .handler = handler_api_slot_download },

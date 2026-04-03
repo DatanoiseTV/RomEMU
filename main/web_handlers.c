@@ -7,6 +7,7 @@
 #include "access_log.h"
 #include "spi_flash_commands.h"
 #include "romemu_common.h"
+#include "gpio_control.h"
 #include "embedded_files.h"
 
 #include "esp_log.h"
@@ -108,6 +109,7 @@ static void slot_to_json(cJSON *arr, int idx)
     cJSON_AddStringToObject(obj, "label", s->label);
     cJSON_AddBoolToObject(obj, "inserted", s->inserted);
     cJSON_AddNumberToObject(obj, "image_size", s->image_size);
+    cJSON_AddNumberToObject(obj, "alloc_size", s->alloc_size);
     cJSON_AddBoolToObject(obj, "has_data", s->data != NULL);
 
     char crc_str[16];
@@ -215,7 +217,7 @@ esp_err_t handler_api_slot_upload(httpd_req_t *req)
     }
 
     int total = req->content_len;
-    if (total <= 0 || total > ROM_SLOT_SIZE_MAX) {
+    if (total <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
         return ESP_FAIL;
     }
@@ -631,4 +633,62 @@ esp_err_t handler_api_log(httpd_req_t *req)
 esp_err_t handler_api_events(httpd_req_t *req)
 {
     return sse_manager_add_client(req);
+}
+
+/* ---- GPIO Control ---- */
+
+esp_err_t handler_api_gpio_get(httpd_req_t *req)
+{
+    char buf[128];
+    gpio_control_get_json(buf, sizeof(buf));
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, strlen(buf));
+}
+
+esp_err_t handler_api_gpio_action(httpd_req_t *req)
+{
+    const char *uri = req->uri;
+    const char *action = uri + strlen("/api/gpio/");
+
+    /* Optional JSON body for parameters */
+    char body[128] = {};
+    int body_len = httpd_req_recv(req, body, sizeof(body) - 1);
+    uint32_t duration = 100;
+    uint32_t param2 = 100;
+
+    if (body_len > 0) {
+        cJSON *json = cJSON_Parse(body);
+        if (json) {
+            cJSON *dur = cJSON_GetObjectItem(json, "duration");
+            if (dur && cJSON_IsNumber(dur)) duration = dur->valueint;
+            cJSON *p2 = cJSON_GetObjectItem(json, "settle");
+            if (!p2) p2 = cJSON_GetObjectItem(json, "post_delay");
+            if (p2 && cJSON_IsNumber(p2)) param2 = p2->valueint;
+            cJSON_Delete(json);
+        }
+    }
+
+    if (strcmp(action, "reset/assert") == 0) {
+        gpio_control_reset_assert();
+    } else if (strcmp(action, "reset/release") == 0) {
+        gpio_control_reset_release();
+    } else if (strcmp(action, "reset/pulse") == 0) {
+        gpio_control_reset_pulse(duration);
+    } else if (strcmp(action, "reset/sequence") == 0) {
+        gpio_control_reset_sequence(duration, param2);
+    } else if (strcmp(action, "power/on") == 0) {
+        gpio_control_power_on();
+    } else if (strcmp(action, "power/off") == 0) {
+        gpio_control_power_off();
+    } else if (strcmp(action, "power/cycle") == 0) {
+        gpio_control_power_cycle(duration, param2);
+    } else {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Unknown GPIO action");
+        return ESP_FAIL;
+    }
+
+    char resp[128];
+    gpio_control_get_json(resp, sizeof(resp));
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, resp, strlen(resp));
 }

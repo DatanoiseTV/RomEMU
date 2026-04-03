@@ -123,9 +123,12 @@ static void handle_read_command(const uint8_t *rx, uint32_t rx_len,
         data_len = tx_size - header_len;
     }
 
-    /* Copy ROM data into TX buffer at the right offset */
+    /* Copy ROM data into TX buffer at the right offset.
+     * Addresses within alloc_size read from PSRAM; beyond that return 0xFF. */
+    uint32_t alloc = slot->alloc_size;
     for (uint32_t i = 0; i < data_len; i++) {
-        tx[header_len + i] = slot->data[(addr + i) % chip_size];
+        uint32_t eff_addr = (addr + i) % chip_size;
+        tx[header_len + i] = (eff_addr < alloc) ? slot->data[eff_addr] : 0xFF;
     }
 
     g_spi_stats.total_reads++;
@@ -157,10 +160,14 @@ static void handle_page_program(const uint8_t *rx, uint32_t rx_len, uint8_t cmd)
     uint32_t data_len = rx_len - header_len;
     uint32_t page_start = addr & ~((uint32_t)page_size - 1);
 
-    /* Page program: can only clear bits (AND operation), wraps within page */
+    /* Page program: can only clear bits (AND operation), wraps within page.
+     * Writes beyond allocated PSRAM are silently dropped. */
+    uint32_t alloc = slot->alloc_size;
     for (uint32_t i = 0; i < data_len; i++) {
         uint32_t write_addr = page_start | ((addr + i) & (page_size - 1));
-        slot->data[write_addr] &= rx[header_len + i];
+        if (write_addr < alloc) {
+            slot->data[write_addr] &= rx[header_len + i];
+        }
     }
 
     s_ctx.write_enable = false;
@@ -214,10 +221,14 @@ static void handle_erase(const uint8_t *rx, uint32_t rx_len, uint8_t cmd)
     }
 
     if (erase_size > 0) {
-        /* Erase = set all bytes to 0xFF */
+        /* Erase = set all bytes to 0xFF (only within allocated region) */
+        uint32_t alloc = slot->alloc_size;
+        uint32_t start = erase_addr;
         uint32_t end = erase_addr + erase_size;
-        if (end > chip_size) end = chip_size;
-        memset(&slot->data[erase_addr], 0xFF, end - erase_addr);
+        if (start < alloc) {
+            if (end > alloc) end = alloc;
+            memset(&slot->data[start], 0xFF, end - start);
+        }
 
         s_ctx.write_enable = false;
         g_spi_stats.total_erases++;

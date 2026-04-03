@@ -75,6 +75,29 @@
             </form>
         </section>
 
+        <!-- GPIO Control -->
+        <section class="card" id="gpio-control">
+            <h2>Target Control</h2>
+            <div id="gpio-status" hx-get="/api/gpio" hx-trigger="load, every 3s" hx-swap="innerHTML">
+                <p class="muted">Loading...</p>
+            </div>
+            <div class="gpio-buttons">
+                <div class="gpio-group">
+                    <h3 class="gpio-label">Reset (GPIO 4)</h3>
+                    <button class="btn btn-small" onclick="gpioAction('reset/assert')">Assert</button>
+                    <button class="btn btn-small" onclick="gpioAction('reset/release')">Release</button>
+                    <button class="btn btn-primary btn-small" onclick="gpioAction('reset/pulse',{duration:100})">Pulse 100ms</button>
+                    <button class="btn btn-small" onclick="gpioAction('reset/pulse',{duration:500})">Pulse 500ms</button>
+                </div>
+                <div class="gpio-group">
+                    <h3 class="gpio-label">Power (GPIO 5)</h3>
+                    <button class="btn btn-insert btn-small" onclick="gpioAction('power/on')">Power ON</button>
+                    <button class="btn btn-eject btn-small" onclick="gpioAction('power/off')">Power OFF</button>
+                    <button class="btn btn-primary btn-small" onclick="gpioAction('power/cycle',{duration:500,settle:200})">Power Cycle</button>
+                </div>
+            </div>
+        </section>
+
         <!-- Statistics -->
         <section class="card" id="statistics">
             <h2>Statistics</h2>
@@ -153,6 +176,18 @@
                 <table class="api-table">
                     <tr><td><span class="method get">GET</span></td><td><code>/api/wifi</code></td><td>Current WiFi mode, IP, RSSI</td></tr>
                     <tr><td><span class="method post">POST</span></td><td><code>/api/wifi</code></td><td>Set STA credentials &mdash; body: <code>{"ssid":"...","password":"..."}</code></td></tr>
+                </table>
+
+                <h3>GPIO Control</h3>
+                <table class="api-table">
+                    <tr><td><span class="method get">GET</span></td><td><code>/api/gpio</code></td><td>Current reset &amp; power pin state</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/reset/assert</code></td><td>Hold target in reset</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/reset/release</code></td><td>Release target from reset</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/reset/pulse</code></td><td>Pulse reset &mdash; body: <code>{"duration": 100}</code> (ms)</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/reset/sequence</code></td><td>Assert, wait, release, wait &mdash; body: <code>{"duration": 100, "post_delay": 100}</code></td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/power/on</code></td><td>Power on (MOSFET gate high)</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/power/off</code></td><td>Power off (MOSFET gate low)</td></tr>
+                    <tr><td><span class="method post">POST</span></td><td><code>/api/gpio/power/cycle</code></td><td>Power off, wait, on &mdash; body: <code>{"duration": 500, "settle": 200}</code></td></tr>
                 </table>
 
                 <h3>Live Events (SSE)</h3>

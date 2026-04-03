@@ -114,7 +114,7 @@ esp_err_t rom_store_upload(int slot_idx, const uint8_t *data, uint32_t size,
         s->data = NULL;
     }
 
-    /* Determine required size from chip database */
+    /* Determine chip capacity from database */
     uint32_t chip_size = size;
     bus_type_t bus = chip_get_bus(chip_type);
     if (bus == BUS_SPI) {
@@ -125,13 +125,37 @@ esp_err_t rom_store_upload(int slot_idx, const uint8_t *data, uint32_t size,
         if (info) chip_size = info->total_size;
     }
 
-    /* Allocate in PSRAM */
-    uint32_t alloc_size = chip_size > size ? chip_size : size;
+    /*
+     * Dynamic PSRAM allocation:
+     * - Try to allocate the full chip size first
+     * - If chip is larger than available PSRAM, allocate as much as we can
+     *   (at least the uploaded image size). Reads beyond allocated region
+     *   return 0xFF (erased state), which is correct behavior.
+     */
+    uint32_t want_size = chip_size > size ? chip_size : size;
+    uint32_t alloc_size = want_size;
     s->data = heap_caps_malloc(alloc_size, MALLOC_CAP_SPIRAM);
+
+    if (!s->data && alloc_size > size) {
+        /* Full chip doesn't fit — try allocating just enough for the image
+         * plus some margin for writes, rounded up to 64K */
+        alloc_size = (size + 0xFFFF) & ~0xFFFF;
+        if (alloc_size < size) alloc_size = size;
+        s->data = heap_caps_malloc(alloc_size, MALLOC_CAP_SPIRAM);
+    }
+
     if (!s->data) {
-        ESP_LOGE(TAG, "Failed to allocate %u bytes in PSRAM for slot %d",
-                 alloc_size, slot_idx);
+        ESP_LOGE(TAG, "Failed to allocate %u bytes in PSRAM for slot %d "
+                 "(free: %u)", alloc_size, slot_idx,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         return ESP_ERR_NO_MEM;
+    }
+
+    if (alloc_size < chip_size) {
+        ESP_LOGW(TAG, "Slot %d: allocated %u of %u bytes (%.0f%%). "
+                 "Reads beyond %u will return 0xFF.",
+                 slot_idx, alloc_size, chip_size,
+                 100.0f * alloc_size / chip_size, alloc_size);
     }
 
     /* Fill with 0xFF (erased state), then copy image */
@@ -142,6 +166,7 @@ esp_err_t rom_store_upload(int slot_idx, const uint8_t *data, uint32_t size,
     s->chip_type = chip_type;
     s->bus_type = bus;
     s->image_size = size;
+    s->alloc_size = alloc_size;
     s->checksum = rom_store_crc32(data, size);
     s->inserted = false;
     if (label && label[0]) {
